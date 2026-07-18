@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Yurucommu",
+  "version": "0.1.0",
+  "identifier": "com.yurucommu",
+  "build": {
+    "beforeDevCommand": "bun run dev:web",
+    "beforeBuildCommand": "bun run build:web",
+    "devUrl": "http://localhost:1430",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Yurucommu",
+        "width": 390,
+        "height": 844,
+        "resizable": true
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "android": { "minSdkVersion": 28 }
+  },
+  "plugins": {
+    "deep-link": {
+      "mobile": [{ "scheme": ["yurucommu"], "appLink": false }],
+      "desktop": { "schemes": ["yurucommu"] }
+    }
+  }
+}

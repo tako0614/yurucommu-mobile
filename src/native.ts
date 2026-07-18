@@ -1,0 +1,44 @@
+import { invoke } from "@tauri-apps/api/core";
+import { appDataDir, join } from "@tauri-apps/api/path";
+import { scan, Format } from "@tauri-apps/plugin-barcode-scanner";
+import { authenticate } from "@tauri-apps/plugin-biometric";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { platform } from "@tauri-apps/plugin-os";
+import { load } from "@tauri-apps/plugin-store";
+import { Stronghold } from "@tauri-apps/plugin-stronghold";
+import {
+  createTauriMobileDefaultProductBridge,
+  detectTauriRuntime,
+  type NativeBridge,
+} from "@takosjp/takosumi-mobile-kit";
+import { productAdapter } from "./product.ts";
+import { mobilePushPlugin } from "./mobile-push.ts";
+
+export function createProductNativeBridge(): NativeBridge {
+  if (detectTauriRuntime()) globalThis.fetch = tauriFetch as typeof fetch;
+  const opener = { openUrl };
+  return createTauriMobileDefaultProductBridge({
+    productAdapter,
+    keychainService: "com.yurucommu",
+    invoke,
+    path: { appDataDir, join },
+    deepLink: { getCurrent, onOpenUrl },
+    opener,
+    store: { load },
+    stronghold: Stronghold,
+    platform: { platform },
+    notification: { isPermissionGranted, requestPermission, sendNotification },
+    barcodeScanner: { scan, qrCodeFormat: Format.QRCode },
+    biometric: { authenticate },
+    clipboard: { writeText },
+    mobilePush: mobilePushPlugin,
+  });
+}

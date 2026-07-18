@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Yurucommu desktop capability set",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:path:default",
+    "clipboard-manager:allow-write-text",
+    "deep-link:default",
+    "http:default",
+    "notification:default",
+    "opener:allow-default-urls",
+    "os:default",
+    "store:default",
+    "stronghold:default"
+  ]
+}

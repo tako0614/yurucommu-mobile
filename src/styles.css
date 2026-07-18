@@ -1,0 +1,88 @@
+@import "@takosjp/takosumi-mobile-kit/mobile-shell.css";
+
+:root {
+  --shell-bg: #fff8f6;
+  --shell-card: #fff;
+  --shell-text: #2f2523;
+  --shell-muted: #74635f;
+  --shell-subtle: #806d68;
+  --shell-strong: #3f302d;
+  --shell-label: #59423d;
+  --shell-border: #f0d8d2;
+  --shell-input-border: #e7c4bc;
+  --shell-control-border: #dcaea4;
+  --shell-metric-border: #f3dfda;
+  --shell-soft: #fffaf8;
+}
+body {
+  background:
+    radial-gradient(circle at 50% 4%, rgb(255 127 110 / 13%), transparent 34%),
+    var(--shell-bg);
+}
+.onboarding-brand {
+  background: linear-gradient(145deg, #ff917f, #ff6f61);
+}
+.password-sign-in,
+.composer {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+.password-sign-in input,
+.composer textarea {
+  border: 1px solid var(--shell-input-border);
+  border-radius: 14px;
+  padding: 12px;
+  font: inherit;
+}
+.composer textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+.mobile-feed,
+.feed-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+.feed-card {
+  border: 1px solid var(--shell-border);
+  border-radius: 18px;
+  padding: 14px;
+  background: #fff;
+}
+.feed-card p {
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+.feed-author {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.feed-author img {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.feed-author div {
+  display: grid;
+}
+.feed-author small,
+.feed-card footer {
+  color: var(--shell-muted);
+  font-size: 0.76rem;
+}
+.feed-card footer {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.feed-card time {
+  margin-left: auto;
+}
+.empty {
+  color: var(--shell-muted);
+  text-align: center;
+}

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-activate-event"
+description = "Enables the activate_event command without any pre-configured scope."
+commands.allow = ["activate_event"]
+
+[[permission]]
+identifier = "deny-activate-event"
+description = "Denies the activate_event command without any pre-configured scope."
+commands.deny = ["activate_event"]
