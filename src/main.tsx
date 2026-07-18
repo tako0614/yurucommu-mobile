@@ -6,7 +6,7 @@ import {
   confirmMobileAction,
   formatMobilePreviewDate,
   mobileTextRemaining,
-} from "@takosjp/takosumi-mobile-kit";
+} from "@takosjp/mobile-kit";
 import {
   defineMobileHostActions,
   MobileComposeField,
@@ -19,7 +19,7 @@ import {
   MobileSegmentedControl,
   renderMobileClientApp,
   type MobileShellMetric,
-} from "@takosjp/takosumi-mobile-kit/solid";
+} from "@takosjp/mobile-kit/solid";
 import {
   createPost,
   loadHome,

@@ -18,7 +18,7 @@ import {
   createTauriMobileDefaultProductBridge,
   detectTauriRuntime,
   type NativeBridge,
-} from "@takosjp/takosumi-mobile-kit";
+} from "@takosjp/mobile-kit";
 import { productAdapter } from "./product.ts";
 import { mobilePushPlugin } from "./mobile-push.ts";
 

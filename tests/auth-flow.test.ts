@@ -7,7 +7,7 @@ import {
   signInWithMobilePassword,
   type FetchLike,
   type NativeBridge,
-} from "@takosjp/takosumi-mobile-kit";
+} from "@takosjp/mobile-kit";
 import { productAdapter } from "../src/product.ts";
 
 test("Yurucommu exchanges a password only with its connected host", async () => {

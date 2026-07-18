@@ -5,7 +5,7 @@
     "": {
       "name": "@takosjp/yurucommu-mobile",
       "dependencies": {
-        "@takosjp/takosumi-mobile-kit": "file:../takosumi/mobile-kit",
+        "@takosjp/mobile-kit": "file:../mobile-kit",
         "@tauri-apps/api": "^2.11.1",
         "@tauri-apps/plugin-barcode-scanner": "^2.4.5",
         "@tauri-apps/plugin-biometric": "^2.3.2",
@@ -119,7 +119,7 @@
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
 
-    "@takosjp/takosumi-mobile-kit": ["@takosjp/takosumi-mobile-kit@file:../takosumi/mobile-kit", { "dependencies": { "takosumi-contract": "file:../contract" }, "devDependencies": { "@types/bun": "^1.2.0", "solid-js": "^1.9.13", "typescript": "^5.7.0" }, "peerDependencies": { "solid-js": "^1.9.0" } }],
+    "@takosjp/mobile-kit": ["@takosjp/mobile-kit@file:../mobile-kit", { "devDependencies": { "@types/bun": "^1.2.0", "solid-js": "^1.9.13", "typescript": "^5.7.0" }, "peerDependencies": { "solid-js": "^1.9.0" } }],
 
     "@tauri-apps/api": ["@tauri-apps/api@2.11.1", "", {}, "sha512-M2FPuYND2m+wh5hfW9ZpSdxMPdEJovPBWwoHJmwUpysTYNHaOkVFN419m/K0LIgjb/7KU2vBgsUepJWugQCvAA=="],
 
@@ -298,8 +298,6 @@
     "vitefu": ["vitefu@1.1.3", "", { "peerDependencies": { "vite": "^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0" }, "optionalPeers": ["vite"] }, "sha512-ub4okH7Z5KLjb6hDyjqrGXqWtWvoYdU3IGm/NorpgHncKoLTCfRIbvlhBm7r0YstIaQRYlp4yEbFqDcKSzXSSg=="],
 
     "yallist": ["yallist@3.1.1", "", {}, "sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g=="],
-
-    "@takosjp/takosumi-mobile-kit/takosumi-contract": ["takosumi-contract@file:../takosumi/contract", {}],
 
     "babel-plugin-jsx-dom-expressions/@babel/helper-module-imports": ["@babel/helper-module-imports@7.18.6", "", { "dependencies": { "@babel/types": "^7.18.6" } }, "sha512-0NFvs3VkuSYbFi1x2Vd6tKrywq+z/cLeYC/RJNFrIX/30Bf5aiGYbtvGXolEktzJH8o5E5KJ3tT+nkxuuZFVlA=="],
   }

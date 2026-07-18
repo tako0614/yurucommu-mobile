@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { createPost, loadHome } from "../src/api.ts";
-import type { MobileSession } from "@takosjp/takosumi-mobile-kit";
+import type { MobileSession } from "@takosjp/mobile-kit";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {

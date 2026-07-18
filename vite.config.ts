@@ -1,5 +1,5 @@
 import solid from "vite-plugin-solid";
-import { createTauriMobileViteConfig } from "@takosjp/takosumi-mobile-kit/vite";
+import { createTauriMobileViteConfig } from "@takosjp/mobile-kit/vite";
 
 export default createTauriMobileViteConfig({
   devPort: 1430,

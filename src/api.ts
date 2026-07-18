@@ -5,7 +5,7 @@ import {
   unregisterNotificationPusherWithHost,
   type MobilePushRegistrationCallbackInput,
   type MobileSession,
-} from "@takosjp/takosumi-mobile-kit";
+} from "@takosjp/mobile-kit";
 
 export interface MobileActor {
   ap_id: string;

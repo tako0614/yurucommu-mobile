@@ -3,7 +3,7 @@ import {
   createDirectDeployHref,
   createFirstRunActions,
   createHostCenterHref,
-} from "@takosjp/takosumi-mobile-kit";
+} from "@takosjp/mobile-kit";
 import { productAdapter } from "../src/product.ts";
 
 test("Yurucommu mobile owns the yurucommu client handoff", () => {
@@ -40,8 +40,8 @@ test("Yurucommu mobile declares its shared source-module dependencies", async ()
     dependencies?: Record<string, string>;
     scripts?: Record<string, string>;
   };
-  expect(pkg.dependencies?.["@takosjp/takosumi-mobile-kit"]).toBe(
-    "file:../takosumi/mobile-kit",
+  expect(pkg.dependencies?.["@takosjp/mobile-kit"]).toBe(
+    "file:../mobile-kit",
   );
   expect(pkg.dependencies?.["takosumi-contract"]).toBe(
     "file:../takosumi/contract",

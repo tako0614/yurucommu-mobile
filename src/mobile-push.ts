@@ -4,7 +4,7 @@ import type {
   TauriMobilePushPluginModule,
   TauriMobilePushTokenRefresh,
   TauriPushToken,
-} from "@takosjp/takosumi-mobile-kit";
+} from "@takosjp/mobile-kit";
 
 const PLUGIN_NAME = "mobile-push";
 const COMMAND_PREFIX = `plugin:${PLUGIN_NAME}|`;

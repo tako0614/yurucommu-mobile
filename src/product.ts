@@ -1,4 +1,4 @@
-import type { MobileProductAdapter } from "@takosjp/takosumi-mobile-kit";
+import type { MobileProductAdapter } from "@takosjp/mobile-kit";
 
 export const productAdapter: MobileProductAdapter = {
   product: "yurucommu",
