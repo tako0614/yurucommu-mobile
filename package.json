@@ -5,7 +5,7 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
-    "bootstrap": "bun install --cwd ../takosumi --frozen-lockfile && bun install --frozen-lockfile",
+    "bootstrap": "bun install --frozen-lockfile",
     "dev": "bunx vite --config vite.config.ts",
     "dev:web": "bun run dev",
     "build": "bunx vite build --config vite.config.ts",
@@ -40,7 +40,6 @@
   },
   "dependencies": {
     "@takosjp/mobile-kit": "file:../mobile-kit",
-    "takosumi-contract": "file:../takosumi/contract",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-barcode-scanner": "^2.4.5",
     "@tauri-apps/plugin-biometric": "^2.3.2",

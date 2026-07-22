@@ -33,7 +33,7 @@ test("Yurucommu exposes manual, Cloudflare, and Takosumi setup paths", () => {
   expect(hostCenter.searchParams.get("product")).toBe("yurucommu");
 });
 
-test("Yurucommu mobile declares its shared source-module dependencies", async () => {
+test("Yurucommu mobile depends only on the standalone shared mobile foundation", async () => {
   const pkg = (await Bun.file(
     new URL("../package.json", import.meta.url),
   ).json()) as {
@@ -43,10 +43,8 @@ test("Yurucommu mobile declares its shared source-module dependencies", async ()
   expect(pkg.dependencies?.["@takosjp/mobile-kit"]).toBe(
     "file:../mobile-kit",
   );
-  expect(pkg.dependencies?.["takosumi-contract"]).toBe(
-    "file:../takosumi/contract",
-  );
-  expect(pkg.scripts?.bootstrap).toContain("../takosumi");
+  expect(pkg.dependencies?.["takosumi-contract"]).toBeUndefined();
+  expect(pkg.scripts?.bootstrap).toBe("bun install --frozen-lockfile");
 });
 
 test("Yurucommu Android identity and secure-keystore floor are product-owned", async () => {
