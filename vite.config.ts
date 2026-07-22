@@ -1,8 +1,10 @@
 import solid from "vite-plugin-solid";
 import { createTauriMobileViteConfig } from "@takosjp/mobile-kit/vite";
 
+const devPort = 1430;
+
 export default createTauriMobileViteConfig({
-  devPort: 1430,
+  devPort,
   importMetaUrl: import.meta.url,
   resolveMobileKitFromPackage: true,
   plugins: [solid()],

@@ -1,6 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { appDataDir, join } from "@tauri-apps/api/path";
-import { scan, Format } from "@tauri-apps/plugin-barcode-scanner";
+import {
+  checkPermissions,
+  Format,
+  requestPermissions,
+  scan,
+} from "@tauri-apps/plugin-barcode-scanner";
 import { authenticate } from "@tauri-apps/plugin-biometric";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
@@ -36,7 +41,12 @@ export function createProductNativeBridge(): NativeBridge {
     stronghold: Stronghold,
     platform: { platform },
     notification: { isPermissionGranted, requestPermission, sendNotification },
-    barcodeScanner: { scan, qrCodeFormat: Format.QRCode },
+    barcodeScanner: {
+      scan,
+      qrCodeFormat: Format.QRCode,
+      checkPermissions,
+      requestPermissions,
+    },
     biometric: { authenticate },
     clipboard: { writeText },
     mobilePush: mobilePushPlugin,

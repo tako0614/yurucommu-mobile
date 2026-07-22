@@ -70,9 +70,15 @@ renderMobileClientApp<YurucommuMobileHome>({
   homeLabel: "フィード",
   copy: {
     eyebrow: "YOUR PLACE, YOUR PEOPLE",
+    // Mirror of `yurucommu/public/icons/yurucommu.svg`, the product-owned
+    // canonical mark. `brandMark` stays as the fallback glyph.
+    brandLogoUrl: "/brand/yurucommu.svg",
     brandMark: "ゆ",
     onboardingTitle: "あなたの居場所につながろう",
     summary: "ゆるくつながる、自分たちのコミュニティ。",
+    // Mirror of takosumi/dashboard/public/tako.png, the canonical Takosumi
+    // mark named by docs/reference/design-language.md, instead of a "T".
+    hostCenterIconUrl: "/brand/takosumi.png",
     takosumiActionLabel: "Takosumiで始める",
     takosumiActionDescription: "Takosumiで作ったコミュニティに接続",
     manualActionLabel: "サーバーを自分で入力",

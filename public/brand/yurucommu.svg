@@ -1,0 +1,24 @@
+<!--
+  Yurucommu brand mark. Mirrors yurucommu/public/icons/yurucommu.svg, but the
+  "ゆ" is outlined geometry rather than an SVG <text> element: text marks do not
+  rasterize in headless renderers (`tauri icon` and ImageMagick both silently
+  drop the glyph and emit an empty tile), which is how the app icon previously
+  shipped blank. Outline traced from Droid Sans Fallback (Apache-2.0), the
+  predecessor of the Noto Sans JP family the web mark asks for; the stroke
+  thickens the regular weight toward the web mark's font-weight 800.
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 1024 1024"
+  role="img"
+  aria-label="Yurucommu"
+>
+  <rect width="1024" height="1024" rx="224" fill="#0a0a0b" />
+  <path
+    d="M566.69 688.37Q542.08 748.52 432.70 814.15L388.95 764.93Q470.98 721.18 498.33 680.16Q424.50 658.29 356.14 592.66L397.16 551.65Q468.25 609.07 520.20 622.74L525.67 568.05L520.20 354.77Q438.17 373.91 378.02 450.48Q304.19 551.65 304.19 614.54L306.92 699.30L249.50 704.77L238.56 505.16Q238.56 365.71 257.70 242.66L317.86 248.13L295.98 494.23L298.72 494.23Q372.55 321.96 517.47 294.62L514.73 212.59L577.63 209.85L580.36 291.88Q676.06 297.35 730.75 352.04Q785.44 406.73 785.44 494.23Q785.44 578.99 726.65 633.68Q667.86 688.37 566.69 688.37M580.36 349.30L585.83 568.05L580.36 628.21Q719.81 617.27 719.81 494.23Q719.81 360.24 580.36 349.30"
+    fill="#fafafa"
+    stroke="#fafafa"
+    stroke-width="26"
+    stroke-linejoin="round"
+  />
+</svg>

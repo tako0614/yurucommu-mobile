@@ -3,3 +3,6 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 release/*.json
+src-tauri/plugins/*/android/build/
+src-tauri/plugins/*/android/.gradle/
+src-tauri/plugins/*/android/.tauri/

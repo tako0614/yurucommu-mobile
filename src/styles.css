@@ -1,26 +1,35 @@
 @import "@takosjp/mobile-kit/mobile-shell.css";
 
+/*
+ * Yurucommu design language. The values below mirror the web client so the
+ * mobile shell and the host screens it hands off to read as one product:
+ * a hard dark surface on the Tailwind `neutral` scale with the single blue
+ * brand accent declared in `yurucommu/src/styles.css`.
+ */
 :root {
-  --shell-bg: #fff8f6;
-  --shell-card: #fff;
-  --shell-text: #2f2523;
-  --shell-muted: #74635f;
-  --shell-subtle: #806d68;
-  --shell-strong: #3f302d;
-  --shell-label: #59423d;
-  --shell-border: #f0d8d2;
-  --shell-input-border: #e7c4bc;
-  --shell-control-border: #dcaea4;
-  --shell-metric-border: #f3dfda;
-  --shell-soft: #fffaf8;
+  color-scheme: dark;
+
+  --shell-bg: #0a0a0a; /* neutral-950, matches web `bg-neutral-950` */
+  --shell-card: #171717; /* neutral-900 */
+  --shell-text: #f5f5f5; /* neutral-100 */
+  --shell-muted: #a3a3a3; /* neutral-400 */
+  --shell-subtle: #737373; /* neutral-500 */
+  --shell-strong: #fafafa; /* neutral-50 */
+  --shell-label: #e5e5e5; /* neutral-200 */
+  --shell-border: #262626; /* neutral-800 */
+  --shell-input-border: #404040; /* neutral-700 */
+  --shell-control-border: #404040;
+  --shell-metric-border: #262626;
+  --shell-soft: #1f1f1f;
 }
 body {
   background:
-    radial-gradient(circle at 50% 4%, rgb(255 127 110 / 13%), transparent 34%),
+    radial-gradient(circle at 50% 4%, rgb(59 130 246 / 12%), transparent 34%),
     var(--shell-bg);
 }
-.onboarding-brand {
-  background: linear-gradient(145deg, #ff917f, #ff6f61);
+/* Dark surfaces need a black lift, not the kit's default warm light-theme one. */
+.setup-choice {
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
 }
 .password-sign-in,
 .composer {
@@ -33,6 +42,8 @@ body {
   border: 1px solid var(--shell-input-border);
   border-radius: 14px;
   padding: 12px;
+  background: var(--shell-card);
+  color: var(--shell-text);
   font: inherit;
 }
 .composer textarea {
@@ -49,7 +60,7 @@ body {
   border: 1px solid var(--shell-border);
   border-radius: 18px;
   padding: 14px;
-  background: #fff;
+  background: var(--shell-card);
 }
 .feed-card p {
   white-space: pre-wrap;

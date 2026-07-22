@@ -3,7 +3,8 @@ import type { MobileProductAdapter } from "@takosjp/mobile-kit";
 export const productAdapter: MobileProductAdapter = {
   product: "yurucommu",
   appName: "Yurucommu",
-  hostNoun: "Yurucommu server",
+  // Reads inside Japanese status sentences, so the noun is Japanese too.
+  hostNoun: "Yurucommu サーバー",
   hostCenterLabel: "Takosumi",
   hostCenterUrl: "https://app.takosumi.com/new",
   hostCenterProduct: "yurucommu",
@@ -14,7 +15,9 @@ export const productAdapter: MobileProductAdapter = {
   directDeployDescription: "Cloudflareへ直接デプロイして接続する",
   urlPlaceholder: "https://your-yurucommu.example",
   primaryActionLabel: "つなぐ",
-  accentColor: "#ff7f6e",
+  // Single Yurucommu brand accent, kept equal to `--accent` in
+  // `yurucommu/src/styles.css` (blue-500) so mobile and web agree.
+  accentColor: "#3b82f6",
   mobileScheme: "yurucommu",
   oidcScopes: ["openid", "profile", "email", "offline_access"],
 };
