@@ -7,15 +7,18 @@ Authentication supports a host-advertised OIDC PKCE flow and host password
 sessions; both become a revocable host bearer before product API calls.
 
 ```sh
-bun run bootstrap
+bun install --frozen-lockfile
 bun run mobile:check
 ```
 
-The checkout must have the Takosumi source beside this repository as
-`../takosumi`. `bootstrap` installs Takosumi's locked source-module workspace
-and this app's locked dependencies; the app declares both `mobile-kit` and its
-contract package explicitly, so a clean checkout does not rely on pre-existing
-parent `node_modules` state.
+The checkout must have the standalone `mobile-kit` source beside this
+repository as `../mobile-kit`. Product API types and calls come from the public
+`@takosjp/yurucommu-api` package; this shell does not depend on a Takosumi
+source checkout. OIDC uses only the operator-registered native public client
+advertised by the connected host and requests only `openid profile`.
+
+This Tauri shell ships for iOS and Android only. Use the Yurucommu web client
+on desktop.
 
 `bun run mobile:native-release-check` remains strict: Android/iOS generated
 projects, product-owned secure keystore and APNs/FCM wiring, and local native

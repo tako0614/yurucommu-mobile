@@ -6,6 +6,7 @@
       "name": "@takosjp/yurucommu-mobile",
       "dependencies": {
         "@takosjp/mobile-kit": "file:../mobile-kit",
+        "@takosjp/yurucommu-api": "3.4.0",
         "@tauri-apps/api": "^2.11.1",
         "@tauri-apps/plugin-barcode-scanner": "^2.4.5",
         "@tauri-apps/plugin-biometric": "^2.3.2",
@@ -119,6 +120,8 @@
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
 
     "@takosjp/mobile-kit": ["@takosjp/mobile-kit@file:../mobile-kit", { "devDependencies": { "@types/bun": "^1.2.0", "solid-js": "^1.9.13", "typescript": "^5.7.0" }, "peerDependencies": { "solid-js": "^1.9.0" } }],
+
+    "@takosjp/yurucommu-api": ["@takosjp/yurucommu-api@3.4.0", "", {}, "sha512-kNa9dAV9DhRYoIITWw+jmsvSwL3nKm+imPffyPkCmXeLGt1CviawFLpH62ICT/MPE7guZxENra8GgrIvo1WGNw=="],
 
     "@tauri-apps/api": ["@tauri-apps/api@2.11.1", "", {}, "sha512-M2FPuYND2m+wh5hfW9ZpSdxMPdEJovPBWwoHJmwUpysTYNHaOkVFN419m/K0LIgjb/7KU2vBgsUepJWugQCvAA=="],
 

@@ -26,8 +26,18 @@ import {
 } from "@takosjp/mobile-kit";
 import { productAdapter } from "./product.ts";
 import { mobilePushPlugin } from "./mobile-push.ts";
+import {
+  createUnsupportedDesktopBridge,
+  isSupportedProductNativePlatform,
+} from "./native-platform.ts";
 
 export function createProductNativeBridge(): NativeBridge {
+  if (
+    detectTauriRuntime() &&
+    !isSupportedProductNativePlatform(platform())
+  ) {
+    return createUnsupportedDesktopBridge();
+  }
   if (detectTauriRuntime()) globalThis.fetch = tauriFetch as typeof fetch;
   const opener = { openUrl };
   return createTauriMobileDefaultProductBridge({

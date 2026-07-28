@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   beginMobileOidcSignIn,
   completeMobileOidcSignIn,
+  discoverHost,
   loadMobileSession,
   mobileAuthRequestStorageKey,
   signInWithMobilePassword,
@@ -85,6 +86,59 @@ test("Yurucommu completes OIDC PKCE and exchanges the ID token for a host sessio
   expect(session.product).toBe("yurucommu");
   expect(session.accessToken).toBe("oidc-host-session");
   expect(session.productEndpoints?.mobileLogout).toBe("/api/auth/logout");
+});
+
+test("Yurucommu discovers and uses the host-registered native OIDC client", async () => {
+  const requests: string[] = [];
+  const discovery = await discoverHost({
+    hostUrl: "https://social.example",
+    expectedProduct: "yurucommu",
+    fetch: async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.endsWith("/.well-known/yurucommu")) {
+        return Response.json({
+          product: "yurucommu",
+          issuer: "https://accounts.example",
+          oidcClientId: "registered-yurucommu-native",
+          auth: { oidc: true, password: false },
+          endpoints: {
+            mobileOidcExchange: "/api/auth/mobile/oidc",
+            mobileLogout: "/api/auth/logout",
+          },
+        });
+      }
+      return new Response(null, { status: 404 });
+    },
+  });
+  expect(requests).toContain(
+    "https://social.example/.well-known/yurucommu",
+  );
+
+  const started = await beginMobileOidcSignIn({
+    adapter: productAdapter,
+    discovery,
+    nativeBridge: memoryBridge(),
+    scope: productAdapter.oidcScopes?.join(" "),
+    fetch: async (input) => {
+      expect(String(input)).toBe(
+        "https://accounts.example/.well-known/openid-configuration",
+      );
+      return Response.json({
+        issuer: "https://accounts.example",
+        authorization_endpoint: "https://accounts.example/oauth/authorize",
+        token_endpoint: "https://accounts.example/oauth/token",
+      });
+    },
+  });
+  const authorize = new URL(started.authorizationUrl);
+  expect(authorize.searchParams.get("client_id")).toBe(
+    "registered-yurucommu-native",
+  );
+  expect(authorize.searchParams.get("redirect_uri")).toBe(
+    "yurucommu://oauth/callback",
+  );
+  expect(authorize.searchParams.get("scope")).toBe("openid profile");
 });
 
 function oidcHostFetch(product: "yurucommu"): FetchLike {

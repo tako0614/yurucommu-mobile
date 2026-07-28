@@ -2,6 +2,7 @@ import type { MobileProductAdapter } from "@takosjp/mobile-kit";
 
 export const productAdapter: MobileProductAdapter = {
   product: "yurucommu",
+  strictDiscoveryProduct: true,
   appName: "Yurucommu",
   // Reads inside Japanese status sentences, so the noun is Japanese too.
   hostNoun: "Yurucommu サーバー",
@@ -19,5 +20,11 @@ export const productAdapter: MobileProductAdapter = {
   // `yurucommu/src/styles.css` (blue-500) so mobile and web agree.
   accentColor: "#3b82f6",
   mobileScheme: "yurucommu",
-  oidcScopes: ["openid", "profile", "email", "offline_access"],
+  // The provider token is exchanged immediately for a host-local bearer.
+  // Email and offline access are not required by the native client.
+  oidcScopes: ["openid", "profile"],
+  requiredHostCapabilities: [
+    "api.social.v1",
+    "client.yurucommu.feed.v1",
+  ],
 };

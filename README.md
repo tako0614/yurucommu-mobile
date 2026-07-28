@@ -11,16 +11,19 @@ HTTPS URL のいずれかでサーバーに接続できます。
 
 ## 始め方
 
-この repo の隣に Takosumi の source checkout が `../takosumi` として必要です。
+この repo の隣に standalone `mobile-kit` checkout が `../mobile-kit` として必要です。
 
 ```sh
-bun run bootstrap
+bun install --frozen-lockfile
 bun run mobile:check
 ```
 
-`bootstrap` は Takosumi 側の locked source-module workspace とこのアプリの locked 依存を
-インストールします。`mobile-kit` と contract package はこのアプリが明示的に宣言しているので、
-親ディレクトリの `node_modules` の状態には依存しません。
+アプリの製品 API contract は公開 package `@takosjp/yurucommu-api`、モバイル共通基盤は
+独立 repo の `@takosjp/mobile-kit` を使います。Takosumi source checkout には依存しません。
+OIDC は接続先が `/.well-known/yurucommu` で広告する operator 登録済み native public client
+だけを使い、要求 scope は `openid profile` に限定します。
+
+この Tauri shell は iOS / Android 専用です。desktop では Yurucommu web client を使ってください。
 
 ## リリースチェック
 

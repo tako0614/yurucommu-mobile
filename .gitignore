@@ -3,6 +3,7 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 release/*.json
+!release/mobile-release-evidence.example.json
 src-tauri/plugins/*/android/build/
 src-tauri/plugins/*/android/.gradle/
 src-tauri/plugins/*/android/.tauri/
