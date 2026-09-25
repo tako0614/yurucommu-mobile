@@ -2,7 +2,7 @@
 name = "tauri-plugin-keystore"
 version = "2.1.0-takos.1"
 authors = ["Takos"]
-description = "Takos-owned mobile secure seed storage for Android Keystore and iOS Keychain"
+description = "Yurucommu-owned mobile secure seed storage for Android Keystore and iOS Keychain"
 edition = "2021"
 rust-version = "1.89"
 license = "AGPL-3.0-only"

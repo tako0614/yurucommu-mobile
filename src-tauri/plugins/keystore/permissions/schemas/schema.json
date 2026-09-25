@@ -331,10 +331,10 @@
           "markdownDescription": "Denies the store command without any pre-configured scope."
         },
         {
-          "description": "Allows Takos mobile to store, retrieve, and remove its Stronghold seed\n#### This default permission set includes:\n\n- `allow-remove`\n- `allow-retrieve`\n- `allow-store`",
+          "description": "Allows Yurucommu mobile to store, retrieve, and remove its Stronghold seed\n#### This default permission set includes:\n\n- `allow-remove`\n- `allow-retrieve`\n- `allow-store`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows Takos mobile to store, retrieve, and remove its Stronghold seed\n#### This default permission set includes:\n\n- `allow-remove`\n- `allow-retrieve`\n- `allow-store`"
+          "markdownDescription": "Allows Yurucommu mobile to store, retrieve, and remove its Stronghold seed\n#### This default permission set includes:\n\n- `allow-remove`\n- `allow-retrieve`\n- `allow-store`"
         }
       ]
     }

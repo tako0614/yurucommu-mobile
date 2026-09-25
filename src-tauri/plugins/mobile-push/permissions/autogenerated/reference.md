@@ -1,6 +1,6 @@
 ## Default Permission
 
-Allows Takos mobile to request push permission, manage its provider registration, and receive lifecycle events
+Allows Yurucommu mobile to request push permission, manage its provider registration, and receive lifecycle events
 
 #### This default permission set includes the following:
 

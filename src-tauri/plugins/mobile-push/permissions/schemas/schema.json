@@ -379,10 +379,10 @@
           "markdownDescription": "Denies the unregister command without any pre-configured scope."
         },
         {
-          "description": "Allows Takos mobile to request push permission, manage its provider registration, and receive lifecycle events\n#### This default permission set includes:\n\n- `allow-activate-event`\n- `allow-deactivate-event`\n- `allow-get-token`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-request-permission`\n- `allow-unregister`",
+          "description": "Allows Yurucommu mobile to request push permission, manage its provider registration, and receive lifecycle events\n#### This default permission set includes:\n\n- `allow-activate-event`\n- `allow-deactivate-event`\n- `allow-get-token`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-request-permission`\n- `allow-unregister`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows Takos mobile to request push permission, manage its provider registration, and receive lifecycle events\n#### This default permission set includes:\n\n- `allow-activate-event`\n- `allow-deactivate-event`\n- `allow-get-token`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-request-permission`\n- `allow-unregister`"
+          "markdownDescription": "Allows Yurucommu mobile to request push permission, manage its provider registration, and receive lifecycle events\n#### This default permission set includes:\n\n- `allow-activate-event`\n- `allow-deactivate-event`\n- `allow-get-token`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-request-permission`\n- `allow-unregister`"
         }
       ]
     }

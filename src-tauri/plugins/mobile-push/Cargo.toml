@@ -2,7 +2,7 @@
 name = "tauri-plugin-mobile-push"
 version = "2.0.0-takos.1"
 authors = ["Takos"]
-description = "Takos-owned APNs and FCM bridge for the Takos mobile shell"
+description = "Yurucommu-owned APNs and FCM bridge for the Yurucommu mobile shell"
 edition = "2021"
 rust-version = "1.89"
 license = "AGPL-3.0-only"

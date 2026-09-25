@@ -1,6 +1,6 @@
 ## Default Permission
 
-Allows Takos mobile to store, retrieve, and remove its Stronghold seed
+Allows Yurucommu mobile to store, retrieve, and remove its Stronghold seed
 
 #### This default permission set includes the following:
 

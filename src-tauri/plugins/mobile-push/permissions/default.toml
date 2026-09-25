@@ -1,5 +1,5 @@
 [default]
-description = "Allows Takos mobile to request push permission, manage its provider registration, and receive lifecycle events"
+description = "Allows Yurucommu mobile to request push permission, manage its provider registration, and receive lifecycle events"
 permissions = [
   "allow-activate-event",
   "allow-deactivate-event",
