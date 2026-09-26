@@ -1,5 +1,7 @@
 # Yurucommu Mobile
 
+日本語: [README.md](README.md)
+
 Feed-first Tauri client for a Yurucommu family server. It can connect through a
 Takosumi install handoff, the product's direct Deploy to Cloudflare flow, a
 trusted QR payload, or a manually entered HTTPS URL.
