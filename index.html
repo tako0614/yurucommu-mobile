@@ -7,7 +7,18 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <meta name="theme-color" content="#ff7f6e" />
+    <meta name="color-scheme" content="dark" />
     <title>Yurucommu</title>
+    <style>
+      /* Pre-hydration flash guard — matches --shell-bg so the webview does not
+         paint browser-default white first on the dark shell. */
+      html,
+      body {
+        margin: 0;
+        background: #0a0a0a;
+        color: #f5f5f5;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
