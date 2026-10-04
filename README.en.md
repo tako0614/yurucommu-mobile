@@ -2,6 +2,16 @@
 
 日本語: [README.md](README.md)
 
+Yurucommu is software each owner deploys for personal use. The mobile client connects to that owner's server;
+federated contacts and community participants are not additional instance owners. This product premise does
+not apply to generic Core or Yurumeet.
+
+Current-user, feed, bookmark and unread responses are checked before display. Malformed replies are shown
+as refresh errors instead of a successful empty feed. Posts with no published time keep that absence, and
+remote author names follow the public API normalization rules. Bookmark failures have a local retry.
+A create-post acknowledgment must include a post ID; an unconfirmed outcome retains the draft without
+automatic resend. Browser shortcuts are only offered when an authenticated handoff is available.
+
 Feed-first Tauri client for a Yurucommu family server. It can connect through a
 Takosumi install handoff, the product's direct Deploy to Cloudflare flow, a
 trusted QR payload, or a manually entered HTTPS URL.
