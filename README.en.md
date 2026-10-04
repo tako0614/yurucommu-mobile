@@ -12,6 +12,11 @@ remote author names follow the public API normalization rules. Bookmark failures
 A create-post acknowledgment must include a post ID; an unconfirmed outcome retains the draft without
 automatic resend. Browser shortcuts are only offered when an authenticated handoff is available.
 
+Ordinary feed refreshes preserve the draft, visibility and pending-send state. A delayed post reply
+does not overwrite later edits or an explicit clear. Accepted-send status is separate from feed readback;
+a failed readback never resends the post. Replies from an earlier connection, authentication state or
+sign-in do not affect the current session.
+
 Feed-first Tauri client for a Yurucommu family server. It can connect through a
 Takosumi install handoff, the product's direct Deploy to Cloudflare flow, a
 trusted QR payload, or a manually entered HTTPS URL.
