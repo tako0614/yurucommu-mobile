@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   appendUniqueMobileItemsById,
   appendUniqueMobileItemsByKey,
@@ -75,12 +75,12 @@ renderMobileClientApp<YurucommuMobileHome>({
     brandLogoUrl: "/brand/yurucommu.svg",
     brandMark: "ゆ",
     onboardingTitle: "あなたの居場所につながろう",
-    summary: "ゆるくつながる、自分たちのコミュニティ。",
+    summary: "自分のサーバーで、みんなとゆるくつながる。",
     // Mirror of takosumi/dashboard/public/tako.png, the canonical Takosumi
     // mark named by docs/reference/design-language.md, instead of a "T".
     hostCenterIconUrl: "/brand/takosumi.png",
     takosumiActionLabel: "Takosumiで始める",
-    takosumiActionDescription: "Takosumiで作ったコミュニティに接続",
+    takosumiActionDescription: "Takosumiで自分用に作ったサーバーに接続",
     manualActionLabel: "サーバーを自分で入力",
     manualActionDescription: "CloudflareやセルフホストのURLを使用",
     connectLabel: "サーバーURL",
@@ -94,18 +94,15 @@ renderMobileClientApp<YurucommuMobileHome>({
   },
   metrics,
   hostActions: actions,
-  renderHomeExtra: ({ home, session, refreshHome, openHostRoute }) => (
+  renderHomeExtra: ({ home, session, refreshHome }) => (
     <>
       <Feed
         home={home}
-        onPost={async (content, visibility) => {
-          await createPost(session, content, visibility);
-          await refreshHome();
-        }}
+        onPost={(content, visibility) => createPost(session, content, visibility)}
+        refreshHome={refreshHome}
       />
       <BookmarksPreview
         load={() => loadYurucommuMobileBookmarksPage(session)}
-        openHostRoute={openHostRoute}
       />
     </>
   ),
@@ -116,10 +113,13 @@ type Visibility = "public" | "unlisted" | "followers";
 function Feed(props: {
   home?: YurucommuMobileHome;
   onPost: (content: string, visibility: Visibility) => Promise<void>;
+  refreshHome: () => Promise<void>;
 }) {
   const [content, setContent] = createSignal("");
   const [visibility, setVisibility] = createSignal<Visibility>("public");
   const [sending, setSending] = createSignal(false);
+  const [sendError, setSendError] = createSignal<string>();
+  const [refreshError, setRefreshError] = createSignal<string>();
   const canPost = () =>
     canSubmitMobileText({
       value: content(),
@@ -140,11 +140,28 @@ function Feed(props: {
             event.preventDefault();
             if (!canPost()) return;
             setSending(true);
+            setSendError(undefined);
+            setRefreshError(undefined);
+            let accepted = false;
             try {
               await props.onPost(content(), visibility());
+              accepted = true;
               setContent("");
+            } catch (error) {
+              setSendError(
+                error instanceof Error
+                  ? error.message
+                  : "投稿の結果を確認できませんでした。再送する前にフィードを確認してください。",
+              );
             } finally {
               setSending(false);
+            }
+            if (accepted) {
+              try {
+                await props.refreshHome();
+              } catch {
+                setRefreshError("投稿は送信済みです。フィードを更新できませんでした。");
+              }
             }
           }}
         >
@@ -187,41 +204,57 @@ function Feed(props: {
             </button>
           </MobileComposeFooter>
         </MobileComposeForm>
+        <Show when={sendError()}>
+          {(error) => <p role="alert">{error()}</p>}
+        </Show>
+        <Show when={refreshError()}>
+          {(error) => <p role="alert">{error()}</p>}
+        </Show>
       </MobileComposeSection>
-      <MobilePreviewSection title="フィード" detail={`${posts().length}件`}>
+      <MobilePreviewSection
+        title="フィード"
+        detail={props.home ? `${posts().length}件` : undefined}
+      >
         <Show
-          when={posts().length}
-          fallback={<p class="empty">まだ投稿はありません。</p>}
+          when={props.home}
+          fallback={<p class="empty">フィードはまだ取得できていません。</p>}
         >
-          <MobilePreviewList>
-            <For each={posts()}>
-              {(post) => (
-                <li>
-                  <MobilePreviewCard class="feed-card">
-                    <div class="feed-author">
-                      <Show when={post.author.icon_url}>
-                        <img src={post.author.icon_url!} alt="" />
-                      </Show>
-                      <div>
-                        <strong>
-                          {post.author.name ?? post.author.preferred_username}
-                        </strong>
-                        <small>@{post.author.preferred_username}</small>
+          <Show
+            when={posts().length}
+            fallback={<p class="empty">まだ投稿はありません。</p>}
+          >
+            <MobilePreviewList>
+              <For each={posts()}>
+                {(post) => (
+                  <li>
+                    <MobilePreviewCard class="feed-card">
+                      <div class="feed-author">
+                        <Show when={post.author.icon_url}>
+                          <img src={post.author.icon_url!} alt="" />
+                        </Show>
+                        <div>
+                          <strong>
+                            {post.author.name ?? post.author.preferred_username}
+                          </strong>
+                          <small>@{post.author.preferred_username}</small>
+                        </div>
                       </div>
-                    </div>
-                    <p>{post.content}</p>
-                    <footer>
-                      <span>♡ {post.like_count}</span>
-                      <span>返信 {post.reply_count}</span>
-                      <time>
-                        {formatMobilePreviewDate(post.published, "ja-JP")}
-                      </time>
-                    </footer>
-                  </MobilePreviewCard>
-                </li>
-              )}
-            </For>
-          </MobilePreviewList>
+                      <p>{post.content}</p>
+                      <footer>
+                        <span>♡ {post.like_count}</span>
+                        <span>返信 {post.reply_count}</span>
+                        <Show when={post.published}>
+                          {(published) => (
+                            <time>{formatMobilePreviewDate(published(), "ja-JP")}</time>
+                          )}
+                        </Show>
+                      </footer>
+                    </MobilePreviewCard>
+                  </li>
+                )}
+              </For>
+            </MobilePreviewList>
+          </Show>
         </Show>
       </MobilePreviewSection>
     </div>
@@ -230,17 +263,42 @@ function Feed(props: {
 
 function BookmarksPreview(props: {
   load: () => Promise<import("./api.ts").MobilePost[]>;
-  openHostRoute: (path: string) => Promise<void>;
 }) {
   const [posts, setPosts] = createSignal<
     readonly import("./api.ts").MobilePost[]
   >([]);
-  createEffect(() => {
-    void props.load().then((next) => {
+  const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal<string>();
+  let active = true;
+  let request = 0;
+  onCleanup(() => {
+    active = false;
+    request += 1;
+  });
+  async function refresh() {
+    const current = ++request;
+    setLoading(true);
+    setError(undefined);
+    setPosts([]);
+    try {
+      const next = await props.load();
+      if (!active || current !== request) return;
       const withIds = next.map((post) => ({ ...post, id: post.ap_id }));
-      const merged = appendUniqueMobileItemsById([], withIds);
-      setPosts(merged);
-    });
+      setPosts(appendUniqueMobileItemsById([], withIds));
+    } catch (error) {
+      if (active && current === request) {
+        setError(
+          error instanceof Error
+            ? error.message
+            : "保存した投稿を取得できませんでした。",
+        );
+      }
+    } finally {
+      if (active && current === request) setLoading(false);
+    }
+  }
+  createEffect(() => {
+    void refresh();
   });
   return (
     <MobilePreviewSection
@@ -249,26 +307,37 @@ function BookmarksPreview(props: {
         <button
           type="button"
           class="text-button"
-          onClick={() => void props.openHostRoute("/bookmarks")}
+          aria-label="保存した投稿を更新"
+          disabled={loading()}
+          onClick={() => void refresh()}
         >
-          すべて見る
+          更新
         </button>
       }
     >
-      <MobilePreviewList>
-        <For each={posts().slice(0, 3)}>
-          {(post) => (
-            <li>
-              <MobilePreviewCard>
-                <strong>
-                  {post.author.name ?? post.author.preferred_username}
-                </strong>
-                <p>{post.content}</p>
-              </MobilePreviewCard>
-            </li>
-          )}
-        </For>
-      </MobilePreviewList>
+      <Show when={!loading()} fallback={<p role="status">読み込み中…</p>}>
+        <Show when={!error()} fallback={<p role="alert">{error()}</p>}>
+          <Show
+            when={posts().length}
+            fallback={<p class="empty">保存した投稿はありません。</p>}
+          >
+            <MobilePreviewList>
+              <For each={posts().slice(0, 3)}>
+                {(post) => (
+                  <li>
+                    <MobilePreviewCard>
+                      <strong>
+                        {post.author.name ?? post.author.preferred_username}
+                      </strong>
+                      <p>{post.content}</p>
+                    </MobilePreviewCard>
+                  </li>
+                )}
+              </For>
+            </MobilePreviewList>
+          </Show>
+        </Show>
+      </Show>
     </MobilePreviewSection>
   );
 }

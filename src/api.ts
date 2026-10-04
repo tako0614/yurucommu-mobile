@@ -10,8 +10,7 @@ import {
   assertOk,
   clearYurucommuApiTransport,
   createPost as createYurucommuPost,
-  fetchCurrentActor,
-  fetchTimeline,
+  normalizeActor,
   setYurucommuApiTransport,
   type Actor,
   type ApiTransport,
@@ -27,11 +26,10 @@ export type MobilePost = Pick<
   Post,
   | "ap_id"
   | "content"
-  | "published"
   | "like_count"
   | "reply_count"
   | "author"
->;
+> & { published: string | null };
 
 export interface YurucommuMobileHome {
   actor: MobileActor;
@@ -43,15 +41,14 @@ export async function loadHome(
   session: MobileSession,
 ): Promise<YurucommuMobileHome> {
   const requests = withYurucommuMobileTransport(session, () => [
-    fetchCurrentActor(),
-    fetchTimeline({ limit: 20 }),
+    fetchMobileCurrentActor(),
+    fetchMobileTimeline(),
     fetchMobileUnreadCount(),
   ] as const);
   const [actor, timeline, unread] = await Promise.all(requests);
-  if (!actor) throw new Error("Yurucommu session is no longer authorized.");
   return {
     actor,
-    posts: timeline.posts.map(decodeMobilePost),
+    posts: timeline,
     unread,
   };
 }
@@ -61,9 +58,14 @@ export async function createPost(
   content: string,
   visibility: "public" | "unlisted" | "followers" = "public",
 ): Promise<void> {
-  await withYurucommuMobileTransport(session, () =>
+  const post: unknown = await withYurucommuMobileTransport(session, () =>
     createYurucommuPost({ content, visibility }),
   );
+  if (!isRecord(post) || !nonEmptyString(post.ap_id)) {
+    throw new Error(
+      "投稿の結果を確認できませんでした。再送する前にフィードを確認してください。",
+    );
+  }
 }
 
 export async function loadYurucommuMobileBookmarksPage(
@@ -132,24 +134,80 @@ async function fetchMobileUnreadCount(): Promise<number> {
   return value.count;
 }
 
+async function fetchMobileTimeline(): Promise<MobilePost[]> {
+  // The published SDK's timeline helper substitutes [] for an absent posts
+  // member. Validate the actual response before that fallback can hide it.
+  const response = await apiFetch("/api/timeline?limit=20");
+  await assertOk(response, "Failed to load timeline");
+  const value: unknown = await response.json();
+  if (!isRecord(value) || !Array.isArray(value.posts)) {
+    throw new Error("Yurucommu timeline response is invalid.");
+  }
+  return value.posts.map(decodeMobilePost);
+}
+
+async function fetchMobileCurrentActor(): Promise<MobileActor> {
+  const response = await apiFetch("/api/auth/me");
+  if (response.status === 401 || response.status === 403) {
+    throw new Error("Yurucommu session is no longer authorized.");
+  }
+  await assertOk(response, "Failed to load current user");
+  const value: unknown = await response.json();
+  if (!isRecord(value)) {
+    throw new Error("Yurucommu current-user response is invalid.");
+  }
+  return decodeMobileActor(value.actor);
+}
+
+function decodeMobileActor(value: unknown): MobileActor {
+  if (
+    !isRecord(value) ||
+    !nonEmptyString(value.ap_id) ||
+    !nonEmptyString(value.preferred_username) ||
+    !nullableString(value.name) ||
+    !nullableString(value.icon_url)
+  ) {
+    throw new Error("Yurucommu current-user response is invalid.");
+  }
+  return value as unknown as MobileActor;
+}
+
 function decodeMobilePost(value: unknown): MobilePost {
   if (
     !isRecord(value) ||
-    typeof value.ap_id !== "string" ||
+    !nonEmptyString(value.ap_id) ||
     typeof value.content !== "string" ||
-    typeof value.published !== "string" ||
-    typeof value.like_count !== "number" ||
-    typeof value.reply_count !== "number" ||
+    !nullableString(value.published) ||
+    !nonNegativeInteger(value.like_count) ||
+    !nonNegativeInteger(value.reply_count) ||
     !isRecord(value.author) ||
-    typeof value.author.ap_id !== "string" ||
-    typeof value.author.preferred_username !== "string" ||
-    (value.author.name !== null && typeof value.author.name !== "string") ||
-    (value.author.icon_url !== null &&
-      typeof value.author.icon_url !== "string")
+    !nonEmptyString(value.author.ap_id) ||
+    !nullableString(value.author.preferred_username) ||
+    (value.author.username !== undefined && !nullableString(value.author.username)) ||
+    !nullableString(value.author.name) ||
+    !nullableString(value.author.icon_url)
   ) {
     throw new Error("Yurucommu post response is invalid.");
   }
-  return value as unknown as MobilePost;
+  // Feed and bookmarks expose the same raw producer shape. Use the public
+  // SDK's actor normalization consistently, including remote cached authors
+  // whose preferred username is null, without inventing a missing timestamp.
+  return {
+    ...value,
+    author: normalizeActor(value.author as unknown as MobileActor),
+  } as unknown as MobilePost;
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function nullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function nonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

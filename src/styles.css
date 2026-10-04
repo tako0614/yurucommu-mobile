@@ -57,6 +57,8 @@ body {
   margin-top: 18px;
 }
 .feed-card {
+  display: grid;
+  gap: 10px;
   border: 1px solid var(--shell-border);
   border-radius: 18px;
   padding: 14px;
