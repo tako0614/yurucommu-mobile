@@ -46,6 +46,36 @@ OIDC は接続先が `/.well-known/yurucommu` で広告する operator 登録済
   APNs/FCM の配線、ローカルの native toolchain がすべて揃っていることを厳密に確認します
 - `bun run mobile:release-evidence-check` — operator 私有の署名・ストア・実機・OIDC・push の証跡を確認します
 
+## リンク（Takosumi から開く・画面へのリンク）
+
+Takosumi は、このアプリを専用アプリとして開くとき、信頼できる専用アプリの一覧
+（`com.yurucommu`、scheme `yurucommu`）にある雛形に画面のURLのoriginを URL encode して入れ、次のどちらかを送ります。
+
+- `yurucommu://connect?host_url=<origin>`
+- `yurucommu://connect?host_url=<origin>&product=yurucommu`
+
+アプリはどちらも受け付けます（自動ではサインインしません）。
+
+- サインインしていなければ、そのサーバーを見つけてサインインの手前まで進みます。
+- 別のサーバーにサインイン中なら、今のセッションはそのまま使えるようにしたまま、そのサーバーを「別の接続先」として
+  出し、保存したアカウントへの切り替えか、サインインして追加するかを利用者が選びます。黙って切り替えません。
+- 同じサーバーにサインイン中なら、何も尋ねずにアプリを開くだけです。
+
+画面へのリンク `yurucommu://open?path=/…`（`host_url=` 付きも可）と `yurucommu://open?url=https://<サーバー>/…` は、
+接続中のサーバーと同じoriginの絶対pathだけを受け付けます。別のoriginへ解決されるもの（`//host`、`/\host`、別の
+scheme）、空白・制御文字、2,048文字を超えるもの、`code`・`token`・`access_token`・`session` などの認証情報の名前の
+query・fragmentを持つものは開く前に拒否します。
+
+- `/`（フィード。Takosumi の画面のURLはこれ）と `/bookmarks` は、ホームのフィードと保存した投稿で開きます。
+- それ以外の画面はアプリに無いため、ホームのままで「リンク先の画面はアプリにありません」と知らせます。認証済みの
+  ブラウザ引き継ぎが無いので、外部ブラウザでは開きません。
+- 別の保存済みサーバーへのリンクは、そのサーバーを出して利用者の切り替えを待ち、切り替えた後に開きます。
+  サインインしていなければ、サインインの後に開きます。
+- 通知をタップしたときは、これまでどおりフィードを開きます。
+
+ストアのIDが決まるまで、Takosumi 側の画面の Interface には `clients` を書きません。universal link・App Links
+（配布者のドメイン）も未設定です。
+
 ## 通知
 
 ビルド時に `VITE_YURUCOMMU_NOTIFICATION_PUSHER_GATEWAY_URL` に公開の notification pusher gateway URL を

@@ -14,7 +14,7 @@ concurrency:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  MOBILE_KIT_SOURCE_REF: 5c1bd1cea2cf54f811f21ad3dac64cac347794e1
+  MOBILE_KIT_SOURCE_REF: 7b7f1daf60dd85cc6fc4f5635af00ce0ba47b5e3
 
 jobs:
   quality:

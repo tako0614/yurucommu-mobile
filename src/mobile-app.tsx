@@ -1,13 +1,14 @@
 import { batch, createRoot, createSignal, getOwner, onCleanup, type JSX } from "solid-js";
 import type { NativeBridge } from "@takosjp/mobile-kit";
 import {
-  defineMobileHostActions, type MobileClientAppProps,
+  type MobileClientAppProps,
   type MobileShellHomeExtraContext, type MobileShellMetric,
 } from "@takosjp/mobile-kit/solid";
 import { loadHome, registerPush, unregisterPush, type YurucommuMobileHome } from "./api.ts";
 import { productAdapter } from "./product.ts";
-import { Feed, BookmarksPreview } from "./feed-screen.tsx";
+import { Feed, BookmarksPreview, HostRouteNoticeBanner } from "./feed-screen.tsx";
 import { createFeedHomeLoader } from "./feed-home-loader.ts";
+import { createHostRouteHandoff, type HostRouteNotice } from "./host-route.ts";
 
 const metrics = [
   { label: "投稿", value: (home) => home?.posts.length },
@@ -15,25 +16,14 @@ const metrics = [
   { label: "フォロー", value: () => undefined },
 ] satisfies readonly MobileShellMetric<YurucommuMobileHome>[];
 
-const actions = defineMobileHostActions<YurucommuMobileHome>([
-  { label: "フィード", description: "すべての投稿を見る", path: "/" },
-  { label: "ストーリー", description: "24時間の近況を見る", path: "/stories" },
-  {
-    label: "通知",
-    description: "反応とフォローを見る",
-    path: "/notifications",
-  },
-  {
-    label: "プロフィール",
-    description: "自分のプロフィールを開く",
-    path: "/profile",
-  },
-]);
-
 export function createYurucommuMobileApp(
   createNativeBridge: () => NativeBridge,
 ): MobileClientAppProps<YurucommuMobileHome> {
   const loader = createFeedHomeLoader({ loadHome });
+  // Route links (`yurucommu://open?path=…` / `?url=…`) open on the home screen;
+  // a route without a native screen is reported here instead of a browser.
+  const [routeNotice, setRouteNotice] = createSignal<HostRouteNotice>();
+  const openHostRoute = createHostRouteHandoff(setRouteNotice);
   let view: {
     active: boolean;
     revision: number;
@@ -72,6 +62,11 @@ export function createYurucommuMobileApp(
         }));
         onCleanup(release);
         return <>
+          <HostRouteNoticeBanner
+            notice={routeNotice()}
+            session={session()}
+            onDismiss={() => setRouteNotice(undefined)}
+          />
           <Feed
             home={home()}
             session={session()}
@@ -105,6 +100,11 @@ export function createYurucommuMobileApp(
     loadHome: loader.load,
     registerPush,
     unregisterPush,
+    openHostRoute,
+    // A tapped notification opens the app on the feed, as before. Its targets
+    // (notifications, posts) have no native screen yet, so it does not go
+    // through the host route handoff.
+    handlePushNotification: (input) => input.kind === "tapped",
     sessionUnlock: {
       restoreMode: "if-available",
       prompt: {
@@ -139,7 +139,10 @@ export function createYurucommuMobileApp(
       shortcutsLabel: "メニュー",
     },
     metrics,
-    hostActions: actions,
+    // The feed and saved posts are native below. Stories, notifications and
+    // profiles are host web screens, and an external browser would not carry
+    // this app's host session (no authenticated browser handoff yet).
+    hostActions: [],
     renderHomeExtra: renderFeed,
   };
 }

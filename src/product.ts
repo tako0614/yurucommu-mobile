@@ -20,6 +20,9 @@ export const productAdapter: MobileProductAdapter = {
   // `yurucommu/src/styles.css` (blue-500) so mobile and web agree.
   accentColor: "#3b82f6",
   mobileScheme: "yurucommu",
+  // A link for another saved server shows it and waits for the user to
+  // switch; it never changes the account in use by itself.
+  confirmRouteAccountSwitch: true,
   // The provider token is exchanged immediately for a host-local bearer.
   // Email and offline access are not required by the native client.
   oidcScopes: ["openid", "profile"],

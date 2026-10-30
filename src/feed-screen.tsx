@@ -15,6 +15,31 @@ import {
 import { loadYurucommuMobileBookmarksPage, type YurucommuMobileHome } from "./api.ts";
 import { createFeedController, type FeedState } from "./feed-controller.ts";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
+import {
+  displayHostRoutePath, hostRouteNoticeFor, type HostRouteNotice,
+} from "./host-route.ts";
+
+/** Shown when a link asked for a host screen that this app does not have. */
+export function HostRouteNoticeBanner(props: {
+  notice?: HostRouteNotice;
+  session: MobileSession;
+  onDismiss: () => void;
+}) {
+  return (
+    <Show when={hostRouteNoticeFor(props.notice, props.session)}>
+      {(notice) => (
+        <div class="route-notice" role="status">
+          <p>
+            リンク先の画面（{displayHostRoutePath(notice().path)}）はアプリにありません。フィードを表示しています。
+          </p>
+          <button type="button" class="text-button" onClick={() => props.onDismiss()}>
+            閉じる
+          </button>
+        </div>
+      )}
+    </Show>
+  );
+}
 
 export function Feed(props: {
   home?: YurucommuMobileHome;
