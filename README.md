@@ -67,6 +67,9 @@ Takosumi は、このアプリを専用アプリとして開くとき、信頼�
 （`code`・`token`・`access_token`・`session`、`…_token` など）の query・fragment・path 引数を持つものも
 拒否しますが、これは名前の一覧と語尾による best effort の検査で、ほかの名前に入った認証情報は通ります。
 `/join?code=…` のように `code` を使うリンクも開きません（mobile-kit の `allowRouteCodeParameter` は使っていません）。
+query・fragment・path 引数の名前は英数字などのASCIIに限ります。全角の英字はASCIIにそろえてから判定し、それ以外の
+ASCIIでない名前（`?名前=…` など）を持つリンクは開きません。似た文字で認証情報の名前を作れないようにするためです。
+値やアンカーにASCIIでない文字があるのは構いません。
 
 - `/`（フィード。Takosumi の画面のURLはこれ）と `/bookmarks` は、ホームのフィードと保存した投稿で開きます。
 - それ以外の画面はアプリに無いため、ホームのままで「リンク先の画面はアプリにありません」と知らせます。認証済みの
