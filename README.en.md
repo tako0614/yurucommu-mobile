@@ -42,6 +42,40 @@ projects, product-owned secure keystore and APNs/FCM wiring, and local native
 toolchains must all be present. `bun run mobile:release-evidence-check` verifies
 the operator-private signing, store, device, OIDC, and push evidence.
 
+### Links (opening from Takosumi, screen links)
+
+When Takosumi opens this app as a screen's native client, it fills the trusted
+template for this app (`com.yurucommu`, scheme `yurucommu`) with the screen
+URL's origin, URL-encoded, and sends one of:
+
+- `yurucommu://connect?host_url=<origin>`
+- `yurucommu://connect?host_url=<origin>&product=yurucommu`
+
+Both are accepted (sign-in is never automatic). Signed out, the app finds the
+server and stops before sign-in. Signed in to another server, the current
+session stays usable and the server is shown as another host; the user chooses
+to switch to a saved account or sign in to add it. Nothing switches silently.
+Signed in to the same server, the app just opens.
+
+Screen links `yurucommu://open?path=/…` (optionally with `host_url=`) and
+`yurucommu://open?url=https://<server>/…` accept only absolute paths on the
+connected server's origin. Paths that resolve to another origin (`//host`,
+`/\host`, other schemes), whitespace or control characters, more than 2,048
+characters, or credential-named query or fragment parameters (`code`, `token`,
+`access_token`, `session`, …) are refused before anything opens.
+
+- `/` (the feed; a Takosumi screen URL is this) and `/bookmarks` open the
+  native feed and saved posts on the home screen.
+- Other screens are not in the app: the home screen stays and says so. They
+  are not opened in an external browser, because there is no authenticated
+  browser handoff.
+- A link for another saved server shows that server and waits for the user to
+  switch; the route opens after the switch, or after sign-in when signed out.
+- Tapping a notification opens the feed, as before.
+
+Until store IDs exist, Takosumi screen interfaces do not declare `clients`.
+Universal links / App Links on a publisher domain are not set up.
+
 Set `VITE_YURUCOMMU_NOTIFICATION_PUSHER_GATEWAY_URL` at build time to the public
 notification pusher gateway. Provider credentials remain in that gateway and
 must never be bundled into the app.
