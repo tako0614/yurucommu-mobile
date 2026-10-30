@@ -59,10 +59,14 @@ Signed in to the same server, the app just opens.
 
 Screen links `yurucommu://open?path=/…` (optionally with `host_url=`) and
 `yurucommu://open?url=https://<server>/…` accept only absolute paths on the
-connected server's origin. Paths that resolve to another origin (`//host`,
-`/\host`, other schemes), whitespace or control characters, more than 2,048
-characters, or credential-named query or fragment parameters (`code`, `token`,
-`access_token`, `session`, …) are refused before anything opens.
+connected server's origin. Non-http(s) URLs, paths that resolve to another
+origin (`//host`, `/\host`), whitespace or control characters, and more than
+2,048 characters are refused before anything opens. Links whose query,
+fragment or path parameters have credential-looking names (`code`, `token`,
+`access_token`, `session`, `…_token`, …) are refused too, on a best-effort
+basis: the check uses a name list and endings, so a credential under another
+name still passes. Links with a `code` parameter (such as `/join?code=…`) do
+not open either (mobile-kit's `allowRouteCodeParameter` is not enabled).
 
 - `/` (the feed; a Takosumi screen URL is this) and `/bookmarks` open the
   native feed and saved posts on the home screen.

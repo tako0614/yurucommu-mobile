@@ -62,9 +62,11 @@ Takosumi は、このアプリを専用アプリとして開くとき、信頼�
 - 同じサーバーにサインイン中なら、何も尋ねずにアプリを開くだけです。
 
 画面へのリンク `yurucommu://open?path=/…`（`host_url=` 付きも可）と `yurucommu://open?url=https://<サーバー>/…` は、
-接続中のサーバーと同じoriginの絶対pathだけを受け付けます。別のoriginへ解決されるもの（`//host`、`/\host`、別の
-scheme）、空白・制御文字、2,048文字を超えるもの、`code`・`token`・`access_token`・`session` などの認証情報の名前の
-query・fragmentを持つものは開く前に拒否します。
+接続中のサーバーと同じoriginの絶対pathだけを受け付けます。http(s) 以外のURL、別のoriginへ解決されるもの
+（`//host`、`/\host`）、空白・制御文字、2,048文字を超えるものは、開く前に拒否します。認証情報らしい名前
+（`code`・`token`・`access_token`・`session`、`…_token` など）の query・fragment・path 引数を持つものも
+拒否しますが、これは名前の一覧と語尾による best effort の検査で、ほかの名前に入った認証情報は通ります。
+`/join?code=…` のように `code` を使うリンクも開きません（mobile-kit の `allowRouteCodeParameter` は使っていません）。
 
 - `/`（フィード。Takosumi の画面のURLはこれ）と `/bookmarks` は、ホームのフィードと保存した投稿で開きます。
 - それ以外の画面はアプリに無いため、ホームのままで「リンク先の画面はアプリにありません」と知らせます。認証済みの
