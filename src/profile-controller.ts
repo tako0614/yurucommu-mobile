@@ -45,6 +45,9 @@ export function createProfileController(options: {
   onChange?: () => void;
   confirmDiscardReply?: () => boolean | Promise<boolean>;
   onPostReplied?: () => Promise<void>;
+  getActorId?: () => string | undefined;
+  confirmDeletePost?: () => boolean | Promise<boolean>;
+  onPostDeleted?: () => Promise<void>;
   onBookmarksChanged?: () => void;
   onDeclined?: () => void;
   onRelationshipChanged?: () => Promise<void>;
@@ -73,12 +76,18 @@ export function createProfileController(options: {
     retiringFollow = false;
     changed();
   };
-  const makePosts = () =>
+  const makePosts = (): ReturnType<typeof createNotificationController> =>
     createNotificationController({
       session,
       isActive: () => live() && state.visible,
       onChange: changed,
       onPostReplied: options.onPostReplied,
+      getActorId: options.getActorId,
+      confirmDeletePost: options.confirmDeletePost,
+      onPostDeleted: async () => {
+        await open(state.actor?.ap_id ?? state.identifier, true);
+        await options.onPostDeleted?.();
+      },
       onBookmarksChanged: options.onBookmarksChanged,
       confirmDiscardReply: options.confirmDiscardReply,
     });

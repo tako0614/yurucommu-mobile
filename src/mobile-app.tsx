@@ -134,6 +134,12 @@ export function createYurucommuMobileApp(
             }),
           onBookmarksChanged: () => setBookmarkRevision((value) => value + 1),
           onPostReplied: () => actions().refreshHome(),
+          getActorId: () => home()?.actor.ap_id,
+          confirmDeletePost: () => confirmMobileAction({ message: "この投稿を削除しますか？取り消しはできません。" }),
+          onPostDeleted: () => {
+            setBookmarkRevision(value => value + 1);
+            return actions().refreshHome();
+          },
           confirmDiscardReply: () =>
             confirmMobileAction({
               message:
@@ -152,6 +158,12 @@ export function createYurucommuMobileApp(
           onChange: () => setNotificationRevision((value) => value + 1),
           onBookmarksChanged: () => setBookmarkRevision((value) => value + 1),
           onPostReplied: () => actions().refreshHome(),
+          getActorId: () => home()?.actor.ap_id,
+          confirmDeletePost: () => confirmMobileAction({ message: "この投稿を削除しますか？取り消しはできません。" }),
+          onPostDeleted: () => {
+            setBookmarkRevision(value => value + 1);
+            return actions().refreshHome();
+          },
           confirmDiscardReply: () =>
             confirmMobileAction({
               message:

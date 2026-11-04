@@ -69,12 +69,13 @@ export function NotificationScreen(props: {
   );
   createEffect(
     on(
-      () => [props.state.page, props.state.post?.ap_id] as const,
-      ([page, id], previous) => {
-        if (previous && page === previous[0] && id === previous[1]) return;
+      () => [props.state.page, props.state.post?.ap_id, props.state.postDeleteStatus] as const,
+      ([page, id, deleted], previous) => {
+        if (previous && page === previous[0] && id === previous[1] && deleted === previous[2]) return;
         if (page === "post" && !id && previous?.[0] === "post") return;
         queueMicrotask(() => {
           if (props.state.page !== page || props.isActive?.() === false) return;
+          if (deleted && previous && deleted !== previous[2] && document.activeElement && document.activeElement !== document.body && document.activeElement.isConnected) return;
           const target =
             page === "home" ? (props.homeFocus?.() ?? openButton) : heading;
           if (target?.isConnected) target.focus();
@@ -85,6 +86,7 @@ export function NotificationScreen(props: {
   );
   return (
     <section class="native-notifications" aria-label="通知と投稿">
+      <Show when={props.state.postDeleteStatus}><p role="status">{props.state.postDeleteStatus}</p></Show>
       <Show
         when={props.state.page !== "home"}
         fallback={
@@ -112,7 +114,7 @@ export function NotificationScreen(props: {
             disabled={
               props.state.loading ||
               props.state.loadingMore ||
-              props.state.bookmarkBusy
+              props.state.bookmarkBusy || props.state.postDeleteBusy
             }
             onClick={() => void props.controller.reload()}
           >
@@ -240,7 +242,8 @@ export function NotificationScreen(props: {
                   session={props.session}
                   post={post()}
                   isActive={() =>
-                    props.isActive?.() !== false && props.state.page === "post"
+                    props.isActive?.() !== false && props.state.page === "post" &&
+                    !props.state.postDeleteBusy && !props.state.postDeleteNeedsReload
                   }
                   store={props.likes}
                 />
@@ -279,7 +282,7 @@ export function NotificationScreen(props: {
                     aria-pressed={post().bookmarkState === true}
                     disabled={
                       props.state.bookmarkBusy ||
-                      props.state.bookmarkNeedsReload
+                      props.state.bookmarkNeedsReload || props.state.postDeleteBusy || props.state.postDeleteNeedsReload
                     }
                     onClick={() => void props.controller.toggleBookmark()}
                   >
@@ -293,6 +296,20 @@ export function NotificationScreen(props: {
                 <Show when={props.state.bookmarkError}>
                   <p role="alert">{props.state.bookmarkError}</p>
                 </Show>
+                <Show when={props.state.post && props.controller.ownsCurrentPost()}>
+                  <button type="button" class="text-button" disabled={props.state.page !== "post" || !props.controller.canDeletePost()} onClick={() => void props.controller.deleteOwnPost()}>
+                    {props.state.postDeleteBusy ? "削除中…" : "投稿を削除"}
+                  </button>
+                  <Show when={props.state.replyDraft && (props.state.replyDraft.content.length || props.state.replyDraft.attachments.length || props.state.replyDraft.sending)}>
+                    <p>返信の下書き・添付や送信中の返信を整理してから削除してください。</p>
+                  </Show>
+                </Show>
+                <Show when={props.state.postDeleteError}>
+                  <div role="alert">
+                    <p>{props.state.postDeleteError}</p>
+                    <button type="button" class="text-button" disabled={props.state.postDeleteBusy || props.state.loading} onClick={() => void props.controller.reload()}>削除状態を再読み込み</button>
+                  </div>
+                </Show>
                 <Show when={post().published} fallback={<span>日時不明</span>}>
                   {(published) => (
                     <time dateTime={published()}>
@@ -305,7 +322,7 @@ export function NotificationScreen(props: {
                 when={post().replyContext}
                 fallback={<p>この投稿の返信先・公開範囲を確認できません。</p>}
               >
-                <Show when={props.state.replyDraft}>
+                <Show when={!props.state.postDeleteBusy && !props.state.postDeleteNeedsReload ? props.state.replyDraft : undefined}>
                   {(draft) => (
                     <PostComposer
                       controller={props.controller.getReplyComposer()!}
