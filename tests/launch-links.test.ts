@@ -11,6 +11,7 @@ import {
   createHostRouteHandoff,
   hostRouteNoticeFor,
   type HostRouteNotice,
+  type NativeNotificationRouteRequest,
 } from "../src/host-route.ts";
 
 // TASK-0119 step 5: what Takosumi sends and what this app does with it.
@@ -43,7 +44,9 @@ test("a connect link for another server while signed in asks and keeps the curre
   await controller.handleLaunchPayload(takosumiConnectLink(B, true));
   // Nothing switched: A is still in use and B is offered.
   expect(controller.getState().session?.hostUrl).toBe(A);
-  expect(controller.getState().session?.accessToken).toBe("a.social.example-session");
+  expect(controller.getState().session?.accessToken).toBe(
+    "a.social.example-session",
+  );
   expect(controller.getState().discovery?.hostUrl).toBe(B);
 
   // Choosing to sign in adds B without losing A.
@@ -51,7 +54,9 @@ test("a connect link for another server while signed in asks and keeps the curre
   expect(controller.getState().session?.hostUrl).toBe(B);
   const accountA = controller.getState().accounts.find((a) => a.hostUrl === A)!;
   await controller.switchAccount(accountA.id);
-  expect(controller.getState().session?.accessToken).toBe("a.social.example-session");
+  expect(controller.getState().session?.accessToken).toBe(
+    "a.social.example-session",
+  );
   expect(bridge.opened).toEqual([]);
   controller.stop();
 });
@@ -81,15 +86,21 @@ test("route links open on the home screen and never in a browser", async () => {
   const { controller, bridge, notices } = setup();
   await signIn(controller, A);
 
-  await controller.handleLaunchPayload(`yurucommu://open?path=%2F&host_url=${encodeURIComponent(A)}`);
+  await controller.handleLaunchPayload(
+    `yurucommu://open?path=%2F&host_url=${encodeURIComponent(A)}`,
+  );
   expect(notices.at(-1)).toBeUndefined();
   // A Takosumi screen URL (`{url}`) is the server's own origin.
-  await controller.handleLaunchPayload(`yurucommu://open?url=${encodeURIComponent(`${A}/`)}`);
+  await controller.handleLaunchPayload(
+    `yurucommu://open?url=${encodeURIComponent(`${A}/`)}`,
+  );
   expect(notices.at(-1)).toBeUndefined();
   await controller.handleLaunchPayload("yurucommu://open?path=%2Fbookmarks");
   expect(notices.at(-1)).toBeUndefined();
 
-  await controller.handleLaunchPayload("yurucommu://open?path=%2Fstories%3Fid%3D1");
+  await controller.handleLaunchPayload(
+    "yurucommu://open?path=%2Fstories%3Fid%3D1",
+  );
   expect(notices.at(-1)).toEqual({ hostUrl: A, path: "/stories" });
   expect(controller.getState().pendingRoute).toBeUndefined();
   expect(bridge.opened).toEqual([]);
@@ -187,7 +198,10 @@ test("an install from before multi-account keeps its session after the update", 
     return {};
   };
   const first = createMobileClientController({
-    adapter: productAdapter, nativeBridge: bridge, fetch, loadHome,
+    adapter: productAdapter,
+    nativeBridge: bridge,
+    fetch,
+    loadHome,
   });
   await first.start();
   expect(first.getState().session?.accessToken).toBe("legacy-host-session");
@@ -196,7 +210,10 @@ test("an install from before multi-account keeps its session after the update", 
 
   // A second launch reads the migrated account, not the old key.
   const second = createMobileClientController({
-    adapter: productAdapter, nativeBridge: bridge, fetch, loadHome,
+    adapter: productAdapter,
+    nativeBridge: bridge,
+    fetch,
+    loadHome,
   });
   await second.start();
   expect(second.getState().session?.accessToken).toBe("legacy-host-session");
@@ -204,18 +221,89 @@ test("an install from before multi-account keeps its session after the update", 
   second.stop();
 });
 
-function setup() {
+function setup(withNativeScreens = false) {
   const bridge = memoryBridge();
   const { fetch, requests } = familyHosts();
   const notices: Array<HostRouteNotice | undefined> = [];
+  const nativeRoutes: NativeNotificationRouteRequest[] = [];
   const controller = createMobileClientController({
     adapter: productAdapter,
     nativeBridge: bridge,
     fetch,
-    openHostRoute: createHostRouteHandoff((notice) => notices.push(notice)),
+    openHostRoute: createHostRouteHandoff(
+      (notice) => notices.push(notice),
+      withNativeScreens ? (route) => nativeRoutes.push(route) : undefined,
+    ),
   });
-  return { controller, bridge, requests, notices };
+  return { controller, bridge, requests, notices, nativeRoutes };
 }
+
+test("native notification links wait for the real selected sign-in and stay in that app account", async () => {
+  const { controller, bridge, nativeRoutes } = setup(true);
+  await controller.handleLaunchPayload(
+    `yurucommu://open?path=%2Fnotifications&host_url=${encodeURIComponent(A)}`,
+  );
+  expect(nativeRoutes).toEqual([]);
+  await controller.signInWithPassword("pw");
+  expect(controller.getState().session?.hostUrl).toBe(A);
+  expect(nativeRoutes.at(-1)?.target).toEqual({ page: "notifications" });
+  expect(nativeRoutes.at(-1)?.session.hostUrl).toBe(A);
+  expect(bridge.opened).toEqual([]);
+  controller.stop();
+});
+
+test("a post link uses its opaque AP ID on the selected server without an external browser", async () => {
+  const { controller, bridge, nativeRoutes } = setup(true);
+  await signIn(controller, A);
+  const apId = "https://remote.example/ap/posts/target";
+  const path = `/post/${encodeURIComponent(apId)}`;
+  await controller.handleLaunchPayload(
+    `yurucommu://open?path=${encodeURIComponent(path)}`,
+  );
+  expect(nativeRoutes.at(-1)?.target).toEqual({ page: "post", apId });
+  expect(nativeRoutes.at(-1)?.session.hostUrl).toBe(A);
+  expect(bridge.opened).toEqual([]);
+  controller.stop();
+});
+
+test("a native post link for another saved account waits for the user's account switch", async () => {
+  const { controller, nativeRoutes } = setup(true);
+  await signIn(controller, A);
+  await controller.handleLaunchPayload(takosumiConnectLink(B, true));
+  await controller.signInWithPassword("pw");
+  const apId = "https://remote.example/ap/posts/a-only";
+  const path = `/post/${encodeURIComponent(apId)}`;
+  await controller.handleLaunchPayload(
+    `yurucommu://open?path=${encodeURIComponent(path)}&host_url=${encodeURIComponent(A)}`,
+  );
+  expect(nativeRoutes).toEqual([]);
+  expect(controller.getState().session?.hostUrl).toBe(B);
+  const accountA = controller
+    .getState()
+    .accounts.find((account) => account.hostUrl === A)!;
+  await controller.switchAccount(accountA.id);
+  expect(nativeRoutes.at(-1)?.target).toEqual({ page: "post", apId });
+  expect(nativeRoutes.at(-1)?.session.hostUrl).toBe(A);
+  controller.stop();
+});
+
+test("unsafe direct native routes cannot dispatch a product screen", async () => {
+  const routes: NativeNotificationRouteRequest[] = [];
+  const handoff = createHostRouteHandoff(
+    () => {},
+    (route) => routes.push(route),
+  );
+  for (const url of [
+    `${B}/notifications`,
+    "https://user:password@a.social.example/notifications",
+    `${A}/post/1?access_token=fixture`,
+  ]) {
+    await expect(
+      handoff({ session: session(A), path: "/notifications", url }),
+    ).rejects.toThrow();
+  }
+  expect(routes).toEqual([]);
+});
 
 async function signIn(
   controller: ReturnType<typeof createMobileClientController>,

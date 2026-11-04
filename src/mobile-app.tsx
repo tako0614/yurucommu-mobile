@@ -1,14 +1,39 @@
-import { batch, createRoot, createSignal, getOwner, onCleanup, type JSX } from "solid-js";
+import {
+  batch,
+  createRenderEffect,
+  createRoot,
+  createSignal,
+  getOwner,
+  onCleanup,
+  type JSX,
+} from "solid-js";
 import type { NativeBridge } from "@takosjp/mobile-kit";
 import {
   type MobileClientAppProps,
-  type MobileShellHomeExtraContext, type MobileShellMetric,
+  type MobileShellHomeExtraContext,
+  type MobileShellMetric,
 } from "@takosjp/mobile-kit/solid";
-import { loadHome, registerPush, unregisterPush, type YurucommuMobileHome } from "./api.ts";
+import {
+  loadHome,
+  registerPush,
+  unregisterPush,
+  type YurucommuMobileHome,
+} from "./api.ts";
 import { productAdapter } from "./product.ts";
-import { Feed, BookmarksPreview, HostRouteNoticeBanner } from "./feed-screen.tsx";
+import {
+  Feed,
+  BookmarksPreview,
+  HostRouteNoticeBanner,
+} from "./feed-screen.tsx";
 import { createFeedHomeLoader } from "./feed-home-loader.ts";
-import { createHostRouteHandoff, type HostRouteNotice } from "./host-route.ts";
+import {
+  createHostRouteHandoff,
+  type HostRouteNotice,
+  type NativeNotificationRouteRequest,
+} from "./host-route.ts";
+import { createNotificationController } from "./notification-controller.ts";
+import { NotificationScreen } from "./notification-screen.tsx";
+import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 
 const metrics = [
   { label: "投稿", value: (home) => home?.posts.length },
@@ -20,20 +45,33 @@ export function createYurucommuMobileApp(
   createNativeBridge: () => NativeBridge,
 ): MobileClientAppProps<YurucommuMobileHome> {
   const loader = createFeedHomeLoader({ loadHome });
-  // Route links (`yurucommu://open?path=…` / `?url=…`) open on the home screen;
-  // a route without a native screen is reported here instead of a browser.
+  // Screen links and notification taps stay in this native account.
+  // Unsupported routes are reported without opening an unauthenticated browser.
   const [routeNotice, setRouteNotice] = createSignal<HostRouteNotice>();
-  const openHostRoute = createHostRouteHandoff(setRouteNotice);
-  let view: {
-    active: boolean;
-    revision: number;
-    owner: ReturnType<typeof getOwner>;
-    element: JSX.Element;
-    dispose: () => void;
-    updateActions: (context: MobileShellHomeExtraContext<YurucommuMobileHome>) => void;
-  } | undefined;
+  const [requestedRoute, setRequestedRoute] =
+    createSignal<NativeNotificationRouteRequest>();
+  const openHostRoute = createHostRouteHandoff(setRouteNotice, (request) =>
+    setRequestedRoute({
+      ...request,
+      session: snapshotFeedSession(request.session),
+    }),
+  );
+  let view:
+    | {
+        active: boolean;
+        revision: number;
+        owner: ReturnType<typeof getOwner>;
+        element: JSX.Element;
+        dispose: () => void;
+        updateActions: (
+          context: MobileShellHomeExtraContext<YurucommuMobileHome>,
+        ) => void;
+      }
+    | undefined;
 
-  function renderFeed(context: MobileShellHomeExtraContext<YurucommuMobileHome>) {
+  function renderFeed(
+    context: MobileShellHomeExtraContext<YurucommuMobileHome>,
+  ) {
     // The public shell reevaluates this extension in a reactive insertion.
     // Its insertion owner identifies a live sign-in, even for repeated credentials.
     const owner = getOwner();
@@ -45,36 +83,94 @@ export function createYurucommuMobileApp(
     }
     if (!view) {
       const current = {
-        active: true, revision: 0, owner,
+        active: true,
+        revision: 0,
+        owner,
         element: undefined as JSX.Element,
         dispose: () => {},
-        updateActions: (_context: MobileShellHomeExtraContext<YurucommuMobileHome>) => {},
+        updateActions: (
+          _context: MobileShellHomeExtraContext<YurucommuMobileHome>,
+        ) => {},
       };
       current.element = createRoot((dispose) => {
         current.dispose = dispose;
         const [home, setHome] = createSignal(context.home);
         const [session, setSession] = createSignal(context.session);
         const [actions, setActions] = createSignal(context);
+        const [notificationRevision, setNotificationRevision] = createSignal(0);
+        const notifications = createNotificationController({
+          session: context.session,
+          isActive: () => current.active,
+          onChange: () => setNotificationRevision((value) => value + 1),
+        });
+        const notificationState = () => {
+          notificationRevision();
+          return notifications.getState();
+        };
+        let adoptedRoute: NativeNotificationRouteRequest | undefined;
+        createRenderEffect(() => {
+          const request = requestedRoute();
+          if (
+            !request ||
+            request === adoptedRoute ||
+            feedSessionIdentity(request.session) !==
+              feedSessionIdentity(session())
+          )
+            return;
+          adoptedRoute = request;
+          if (request.target.page === "notifications")
+            void notifications.openNotifications();
+          else if (request.target.page === "post")
+            void notifications.openPost(request.target.apId);
+          else notifications.showHome();
+        });
         current.updateActions = setActions;
-        const release = loader.mount(context, (snapshot) => batch(() => {
-          setSession(snapshot.session);
-          setHome(snapshot.home);
-        }));
+        const release = loader.mount(context, (snapshot) =>
+          batch(() => {
+            if (
+              feedSessionIdentity(snapshot.session) !==
+              feedSessionIdentity(session())
+            ) {
+              if (adoptedRoute && requestedRoute() === adoptedRoute)
+                setRequestedRoute(undefined);
+              adoptedRoute = undefined;
+              notifications.updateSession(snapshot.session);
+            }
+            setSession(snapshot.session);
+            setHome(snapshot.home);
+          }),
+        );
         onCleanup(release);
-        return <>
-          <HostRouteNoticeBanner
-            notice={routeNotice()}
-            session={session()}
-            onDismiss={() => setRouteNotice(undefined)}
-          />
-          <Feed
-            home={home()}
-            session={session()}
-            refreshHome={() => actions().refreshHome()}
-            isActive={() => current.active}
-          />
-          <BookmarksPreview session={session()} isActive={() => current.active} />
-        </>;
+        onCleanup(() => {
+          notifications.dispose();
+          if (adoptedRoute && requestedRoute() === adoptedRoute)
+            setRequestedRoute(undefined);
+        });
+        return (
+          <>
+            <HostRouteNoticeBanner
+              notice={routeNotice()}
+              session={session()}
+              onDismiss={() => setRouteNotice(undefined)}
+            />
+            <NotificationScreen
+              state={notificationState()}
+              controller={notifications}
+            />
+            <div hidden={notificationState().page !== "home"}>
+              <Feed
+                home={home()}
+                session={session()}
+                refreshHome={() => actions().refreshHome()}
+                isActive={() => current.active}
+              />
+              <BookmarksPreview
+                session={session()}
+                isActive={() => current.active}
+              />
+            </div>
+          </>
+        );
       }, null);
       view = current;
     }
@@ -101,10 +197,8 @@ export function createYurucommuMobileApp(
     registerPush,
     unregisterPush,
     openHostRoute,
-    // A tapped notification opens the app on the feed, as before. Its targets
-    // (notifications, posts) have no native screen yet, so it does not go
-    // through the host route handoff.
-    handlePushNotification: (input) => input.kind === "tapped",
+    // The pinned shell screens push targets and sends taps through the same
+    // native route handoff as links. No browser receives this app's bearer.
     sessionUnlock: {
       restoreMode: "if-available",
       prompt: {
@@ -139,9 +233,8 @@ export function createYurucommuMobileApp(
       shortcutsLabel: "メニュー",
     },
     metrics,
-    // The feed and saved posts are native below. Stories, notifications and
-    // profiles are host web screens, and an external browser would not carry
-    // this app's host session (no authenticated browser handoff yet).
+    // Product screens below own their host-scoped API requests. No external
+    // browser shortcut is offered without an authenticated handoff.
     hostActions: [],
     renderHomeExtra: renderFeed,
   };
