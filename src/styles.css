@@ -1,5 +1,26 @@
 @import "@takosjp/mobile-kit/mobile-shell.css";
 
+.post-media {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.post-media li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.post-media img,
+.post-media video {
+  display: block;
+  width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  border-radius: 12px;
+}
+
 /*
  * Yurucommu design language. The values below mirror the web client so the
  * mobile shell and the host screens it hands off to read as one product:

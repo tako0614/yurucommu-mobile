@@ -1,5 +1,7 @@
 # Yurucommu Mobile
 
+Post attachments are available in the feed, saved posts and notification post view. Images and videos load only after an explicit display action; failures can be retried and videos do not autoplay. Only the connected server's canonical media route receives the selected account's authorization. Public remote media remains anonymous. Private media uses temporary object URLs that are released when the account changes or its view is disposed. Invalid URLs and unsupported formats show an unavailable state. Uploading attachments is not implemented yet. These are source/portable behaviors; device codecs and real-server use require separate verification.
+
 日本語: [README.md](README.md)
 
 Yurucommu is software each owner deploys for personal use. The mobile client connects to that owner's server;

@@ -15,6 +15,7 @@ import {
 import { loadYurucommuMobileBookmarksPage, type YurucommuMobileHome } from "./api.ts";
 import { createFeedController, type FeedState } from "./feed-controller.ts";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
+import { PostMedia } from "./post-media.tsx";
 import {
   displayHostRoutePath, hostRouteNoticeFor, type HostRouteNotice,
 } from "./host-route.ts";
@@ -158,6 +159,7 @@ export function Feed(props: {
                         </div>
                       </div>
                       <p>{post.content}</p>
+                      <PostMedia attachments={post.attachments} session={props.session} isActive={props.isActive} />
                       <footer>
                         <span>♡ {post.like_count}</span>
                         <span>返信 {post.reply_count}</span>
@@ -255,6 +257,7 @@ export function BookmarksPreview(props: {
                         {post.author.name ?? post.author.preferred_username}
                       </strong>
                       <p>{post.content}</p>
+                      <PostMedia attachments={post.attachments} session={props.session} isActive={props.isActive} />
                     </MobilePreviewCard>
                   </li>
                 )}

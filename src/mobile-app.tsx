@@ -154,6 +154,7 @@ export function createYurucommuMobileApp(
               onDismiss={() => setRouteNotice(undefined)}
             />
             <NotificationScreen
+              session={session()}
               state={notificationState()}
               controller={notifications}
             />
