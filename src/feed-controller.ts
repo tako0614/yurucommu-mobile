@@ -4,10 +4,12 @@ import {
   uploadPostMedia,
   validateMobileUpload,
   type MobileUploadedAttachment,
+  type MobilePostVisibility,
+  type MobileReplyTarget,
 } from "./api.ts";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 
-export type FeedVisibility = "public" | "unlisted" | "followers";
+export type FeedVisibility = MobilePostVisibility;
 export const MAX_MOBILE_ATTACHMENTS = 8;
 
 export interface FeedAttachment {
@@ -29,6 +31,7 @@ export interface FeedState {
   readonly attachments: readonly FeedAttachment[];
   readonly attachmentError: string;
   readonly canSubmit: boolean;
+  readonly replyAudienceNeedsChoice?: boolean;
 }
 
 // One authority incarnation owns its draft and pending send. Its request keeps
@@ -38,7 +41,9 @@ export function createFeedController(options: {
   refreshHome: () => Promise<void>;
   onChange?: (state: FeedState) => void;
   isActive?: () => boolean;
+  replyTo?: MobileReplyTarget & Readonly<{ visibility: FeedVisibility }>;
 }) {
+  let replyTarget = options.replyTo ? { ...options.replyTo } : undefined;
   let session = snapshotFeedSession(options.session);
   let sessionKey = feedSessionIdentity(session);
   let authority = 0;
@@ -46,7 +51,9 @@ export function createFeedController(options: {
   let sendRevision = 0;
   let disposed = false;
   let content = "";
-  let visibility: FeedVisibility = "public";
+  let visibility: FeedVisibility = replyTarget?.visibility ?? "public";
+  let audienceConfirmed =
+    !replyTarget || replyTarget.visibility !== "followers";
   let sending = false;
   let error = "";
   let status = "";
@@ -73,12 +80,17 @@ export function createFeedController(options: {
       refreshError,
       attachments: Array.from(attachments.values(), (entry) => entry.view),
       attachmentError,
+      ...(replyTarget ? { replyAudienceNeedsChoice: !audienceConfirmed } : {}),
       canSubmit:
+        audienceConfirmed &&
         canSubmitMobileText({
           value: content,
           disabled: sending,
           maxLength: 500,
         }) &&
+        (!replyTarget ||
+          visibility !== "direct" ||
+          /@[a-zA-Z0-9_]+(?:@[a-zA-Z0-9.-]+)?/.test(content)) &&
         Array.from(attachments.values()).every(
           (entry) => entry.view.phase === "ready",
         ),
@@ -103,8 +115,16 @@ export function createFeedController(options: {
   }
 
   function setVisibility(value: FeedVisibility) {
-    if (!active(authority) || value === visibility) return;
+    if (!active(authority)) return;
+    if (
+      replyTarget &&
+      (replyTarget.visibility !== "followers" ||
+        (value !== "followers" && value !== "direct"))
+    )
+      return;
+    if (value === visibility && audienceConfirmed) return;
     visibility = value;
+    audienceConfirmed = true;
     draftRevision += 1;
     publish();
   }
@@ -173,7 +193,7 @@ export function createFeedController(options: {
               error: `${cause instanceof Error ? cause.message : "アップロードの結果を確認できませんでした。"} 自動で再送していません。`,
             };
           } finally {
-            entry.abort = undefined;
+            if (entry.abort === abort) entry.abort = undefined;
             if (active(expected)) publish();
           }
         }
@@ -280,10 +300,11 @@ export function createFeedController(options: {
         submittedVisibility,
         submittedMedia,
         requestAbort.signal,
+        replyTarget,
       );
       if (!active(expected)) return;
       accepted = true;
-      status = "投稿を送信しました。";
+      status = replyTarget ? "返信を投稿しました。" : "投稿を送信しました。";
       if (draftRevision === revision) {
         content = "";
         draftRevision += 1;
@@ -305,7 +326,9 @@ export function createFeedController(options: {
       // A network or malformed acknowledgment can follow a committed POST.
       // Keep the draft and never infer that retrying the mutation is safe.
       if (!error.includes("再送する前に")) {
-        error += " 再送する前にフィードを確認してください。";
+        error += options.replyTo
+          ? " 再送する前に返信一覧を確認してください。"
+          : " 再送する前にフィードを確認してください。";
       }
     } finally {
       if (postAbort === requestAbort) postAbort = undefined;
@@ -319,11 +342,64 @@ export function createFeedController(options: {
         await options.refreshHome();
       } catch {
         if (active(expected) && sendRevision === attempt) {
-          refreshError = "投稿は送信済みです。フィードを更新できませんでした。";
+          refreshError = options.replyTo
+            ? "返信は送信済みです。返信一覧を更新できませんでした。"
+            : "投稿は送信済みです。フィードを更新できませんでした。";
           publish();
         }
       }
     }
+  }
+
+  // A reply can leave the visible route without losing its draft. Retire
+  // requests, not content; abort is never a promise of server-side rollback.
+  function pause() {
+    if (disposed) return;
+    const wasSending = sending;
+    authority += 1;
+    postAbort?.abort();
+    postAbort = undefined;
+    pump = undefined;
+    for (const entry of attachments.values()) {
+      if (entry.view.phase !== "uploading" && entry.view.phase !== "queued")
+        continue;
+      entry.abort?.abort();
+      entry.abort = undefined;
+      entry.uploaded = undefined;
+      entry.view = {
+        ...entry.view,
+        phase: "error",
+        error:
+          "アップロードを中断しました。結果を確認してから再アップロードしてください。",
+      };
+    }
+    sending = false;
+    if (wasSending)
+      error = "送信結果が不明です。返信一覧を確認してから再送してください。";
+    status = "";
+    refreshError = "";
+    sendRevision += 1;
+    draftRevision += 1;
+    publish();
+  }
+
+  function updateReplyContext(
+    target: MobileReplyTarget & { visibility: FeedVisibility },
+  ) {
+    if (
+      !replyTarget ||
+      target.apId !== replyTarget.apId ||
+      disposed ||
+      (replyTarget.communityApId === target.communityApId &&
+        replyTarget.visibility === target.visibility)
+    )
+      return;
+    pause();
+    replyTarget = { ...target };
+    visibility = target.visibility;
+    audienceConfirmed = target.visibility !== "followers";
+    draftRevision += 1;
+    publish();
   }
 
   function updateSession(next: MobileSession) {
@@ -340,7 +416,8 @@ export function createFeedController(options: {
     sendRevision += 1;
     draftRevision += 1;
     content = "";
-    visibility = "public";
+    visibility = replyTarget?.visibility ?? "public";
+    audienceConfirmed = !replyTarget || replyTarget.visibility !== "followers";
     sending = false;
     error = "";
     status = "";
@@ -370,6 +447,8 @@ export function createFeedController(options: {
     removeAttachment,
     retryAttachment,
     submit,
+    pause,
+    updateReplyContext,
     updateSession,
     dispose,
   };

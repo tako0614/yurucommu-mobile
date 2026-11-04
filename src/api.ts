@@ -26,6 +26,12 @@ export type MobileActor = Pick<
   "ap_id" | "preferred_username" | "name" | "icon_url"
 >;
 
+export type MobilePostVisibility = Post["visibility"];
+export interface MobileReplyTarget {
+  readonly apId: string;
+  readonly communityApId: string | null;
+}
+
 export type MobilePost = Pick<
   Post,
   "ap_id" | "content" | "like_count" | "reply_count" | "author"
@@ -104,10 +110,18 @@ export async function withMobileReadScope<T>(
 export async function createPost(
   session: MobileSession,
   content: string,
-  visibility: "public" | "unlisted" | "followers" = "public",
+  visibility: MobilePostVisibility = "public",
   attachments: readonly MediaAttachment[] = [],
   signal?: AbortSignal,
+  replyTo?: MobileReplyTarget,
 ): Promise<void> {
+  if (
+    replyTo &&
+    (!nonEmptyString(replyTo.apId) ||
+      (replyTo.communityApId !== null &&
+        !nonEmptyString(replyTo.communityApId)))
+  )
+    throw new Error("返信先の投稿を確認できませんでした。");
   const selected = snapshotFeedSession(session),
     abort = new AbortController();
   const cancel = () => abort.abort(signal?.reason);
@@ -117,11 +131,88 @@ export async function createPost(
     () => abort.abort(new Error("投稿の結果を時間内に確認できませんでした。")),
     15_000,
   );
+  const request: MobileReadRequest = (path) => {
+    if (abort.signal.aborted) return Promise.reject(abort.signal.reason);
+    return withYurucommuMobileTransport(selected, () =>
+      apiFetch(path, {
+        signal: abort.signal,
+        timeoutMs: 0,
+        credentials: "omit",
+        redirect: "error",
+        cache: "no-store",
+      }),
+    );
+  };
   try {
+    if (abort.signal.aborted) throw abort.signal.reason;
+    if (replyTo && visibility === "direct") {
+      const mentions = [
+        ...new Set(
+          Array.from(
+            content.matchAll(/@([a-zA-Z0-9_]+(?:@[a-zA-Z0-9.-]+)?)/g),
+            (match) => match[1]!,
+          ),
+        ),
+      ];
+      if (!mentions.length)
+        throw new Error("ダイレクト返信の宛先を本文で指定してください。");
+      // Core skips self mentions. Read the actual selected identity instead of
+      // inferring it from an OIDC subject or a display handle.
+      const self = await fetchMobileCurrentActor(request);
+      let hasRecipient = false;
+      // Core may silently skip unresolved mentions. Resolve every explicit
+      // handle through its existing selected-server actor API before POST.
+      for (const mention of mentions) {
+        if (abort.signal.aborted) throw abort.signal.reason;
+        const [username, domain] = mention.split("@");
+        const lookup = domain ? `${username}@${domain.toLowerCase()}` : mention;
+        const response = await request(
+          `/api/actors/${encodeURIComponent(lookup)}`,
+        );
+        if (!response.ok)
+          throw new Error(
+            `宛先 @${mention} を確認できませんでした。返信は送信していません。`,
+          );
+        const value = await readMutationAcknowledgement(
+          response,
+          128 * 1024,
+          "宛先の確認",
+        );
+        if (
+          !isRecord(value) ||
+          !isRecord(value.actor) ||
+          !nonEmptyString(value.actor.ap_id) ||
+          value.actor.preferred_username !== username
+        )
+          throw new Error(`宛先 @${mention} の応答を確認できませんでした。`);
+        const identity = new URL(value.actor.ap_id);
+        if (
+          !["http:", "https:"].includes(identity.protocol) ||
+          identity.username ||
+          identity.password ||
+          (domain !== undefined &&
+            identity.host.toLowerCase() !== domain.toLowerCase())
+        )
+          throw new Error(`宛先 @${mention} のサーバーが一致しません。`);
+        if (value.actor.ap_id !== self.ap_id) hasRecipient = true;
+      }
+      if (!hasRecipient)
+        throw new Error(
+          "自分以外のダイレクト返信の宛先を本文で指定してください。返信は送信していません。",
+        );
+    }
     if (abort.signal.aborted) throw abort.signal.reason;
     const body: Parameters<typeof createYurucommuPost>[0] = {
       content,
       visibility,
+      ...(replyTo
+        ? {
+            in_reply_to: replyTo.apId,
+            ...(replyTo.communityApId === null
+              ? {}
+              : { community_ap_id: replyTo.communityApId }),
+          }
+        : {}),
       ...(attachments.length
         ? {
             attachments: attachments.map(
@@ -160,8 +251,58 @@ export async function createPost(
       !nonEmptyString(value.post.ap_id)
     )
       throw new Error(
-        "投稿の結果を確認できませんでした。再送する前にフィードを確認してください。",
+        replyTo
+          ? "返信の結果を確認できませんでした。再送する前に返信一覧を確認してください。"
+          : "投稿の結果を確認できませんでした。再送する前にフィードを確認してください。",
       );
+    if (replyTo) {
+      if (
+        !isRecord(value.post.author) ||
+        !nonEmptyString(value.post.author.ap_id)
+      )
+        throw new Error("返信の送信者を確認できませんでした。");
+      const acceptedId = value.post.ap_id,
+        acceptedAuthor = value.post.author.ap_id;
+      if (abort.signal.aborted) throw abort.signal.reason;
+      if (value.post.mention_processing !== undefined) {
+        const mentions = value.post.mention_processing;
+        if (
+          !isRecord(mentions) ||
+          typeof mentions.failed_count !== "number" ||
+          !Number.isSafeInteger(mentions.failed_count) ||
+          mentions.failed_count < 0 ||
+          mentions.failed_count > 0
+        )
+          throw new Error(
+            "返信は保存された可能性がありますが、宛先の処理を確認できませんでした。返信一覧を確認してください。",
+          );
+      }
+      // The current producer ACK omits in_reply_to. Confirm the saved object
+      // via the selected server, never by fetching the returned AP ID directly.
+      const readback = await request(
+        `/api/posts/${encodeURIComponent(acceptedId)}`,
+      );
+      if (!readback.ok) throw await mutationError(readback, "返信の確認");
+      const saved = await readMutationAcknowledgement(
+        readback,
+        128 * 1024,
+        "返信の確認",
+      );
+      if (
+        !isRecord(saved) ||
+        !isRecord(saved.post) ||
+        saved.post.ap_id !== acceptedId ||
+        saved.post.in_reply_to !== replyTo.apId ||
+        saved.post.visibility !== visibility ||
+        saved.post.community_ap_id !== replyTo.communityApId ||
+        !isRecord(saved.post.author) ||
+        saved.post.author.ap_id !== acceptedAuthor
+      )
+        throw new Error(
+          "保存された返信の宛先または公開範囲を確認できませんでした。",
+        );
+      if (abort.signal.aborted) throw abort.signal.reason;
+    }
   } finally {
     clearTimeout(deadline);
     signal?.removeEventListener("abort", cancel);

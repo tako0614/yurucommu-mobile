@@ -8,6 +8,7 @@ import {
   type JSX,
 } from "solid-js";
 import type { NativeBridge } from "@takosjp/mobile-kit";
+import { confirmMobileAction } from "@takosjp/mobile-kit";
 import {
   type MobileClientAppProps,
   type MobileShellHomeExtraContext,
@@ -104,6 +105,12 @@ export function createYurucommuMobileApp(
           isActive: () => current.active,
           onChange: () => setNotificationRevision((value) => value + 1),
           onBookmarksChanged: () => setBookmarkRevision((value) => value + 1),
+          onPostReplied: () => actions().refreshHome(),
+          confirmDiscardReply: () =>
+            confirmMobileAction({
+              message:
+                "別の投稿へ移ると、入力中の返信と添付を破棄します。移動しますか？",
+            }),
         });
         const notificationState = () => {
           notificationRevision();
