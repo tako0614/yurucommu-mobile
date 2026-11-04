@@ -2,6 +2,8 @@ import { createEffect, For, on, Show } from "solid-js";
 import { formatMobilePreviewDate } from "@takosjp/mobile-kit";
 import type { MobileSession } from "@takosjp/mobile-kit";
 import { PostMedia } from "./post-media.tsx";
+import { PostLike } from "./post-like.tsx";
+import type { PostLikeStore } from "./post-like-controller.ts";
 import { PostComposer } from "./post-composer.tsx";
 import {
   MobilePreviewCard,
@@ -46,6 +48,7 @@ export function NotificationScreen(props: {
   controller: Controller;
   isActive?: () => boolean;
   homeFocus?: () => HTMLElement | undefined;
+  likes: PostLikeStore;
 }) {
   let heading: HTMLHeadingElement | undefined;
   let openButton: HTMLButtonElement | undefined;
@@ -201,6 +204,14 @@ export function NotificationScreen(props: {
           {(post) => (
             <>
               <MobilePreviewCard class="native-notification-post">
+                <PostLike
+                  session={props.session}
+                  post={post()}
+                  isActive={() =>
+                    props.isActive?.() !== false && props.state.page === "post"
+                  }
+                  store={props.likes}
+                />
                 <p>
                   <strong>
                     {post().author.name || post().author.preferred_username}
@@ -324,6 +335,15 @@ export function NotificationScreen(props: {
                     {(reply) => (
                       <li>
                         <MobilePreviewCard class="native-notification-post">
+                          <PostLike
+                            session={props.session}
+                            post={reply}
+                            isActive={() =>
+                              props.isActive?.() !== false &&
+                              props.state.page === "post"
+                            }
+                            store={props.likes}
+                          />
                           <strong>
                             {reply.author.name ||
                               reply.author.preferred_username}
