@@ -126,6 +126,12 @@ export function createYurucommuMobileApp(
           onChange: () => setProfileRevision((value) => value + 1),
           onDeclined: () => restoreProfileFocus(),
           onRelationshipChanged: () => actions().refreshHome(),
+          onProfileChanged: () => actions().refreshHome(),
+          confirmDiscardProfile: () =>
+            confirmMobileAction({
+              message:
+                "入力中のプロフィール変更を破棄して、現在の保存状態を読み直しますか？",
+            }),
           onBookmarksChanged: () => setBookmarkRevision((value) => value + 1),
           onPostReplied: () => actions().refreshHome(),
           confirmDiscardReply: () =>

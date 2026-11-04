@@ -10,20 +10,33 @@ import type { MobileSession } from "@takosjp/mobile-kit";
 import {
   createMobileMediaController,
   describeMobilePostMedia,
+  describeMobileProfileImage,
   type MobileMediaSource,
   type MobileMediaState,
 } from "./post-media.ts";
 
 export function PostMedia(props: {
-  attachments: unknown;
+  attachments?: unknown;
+  profileImage?: { url: string; label: string };
   session: MobileSession;
   isActive?: () => boolean;
 }) {
   const sources = createMemo(() =>
-    describeMobilePostMedia(props.attachments, props.session.hostUrl),
+    props.profileImage
+      ? describeMobileProfileImage(
+          props.profileImage.url,
+          props.session.hostUrl,
+          props.profileImage.label,
+        )
+      : describeMobilePostMedia(props.attachments, props.session.hostUrl),
   );
   return (
-    <Show when={sources().length}>
+    <Show
+      when={
+        sources().length &&
+        (!props.profileImage || props.isActive?.() !== false)
+      }
+    >
       <ul class="post-media" aria-label="投稿の添付">
         <For each={sources()}>
           {(source) => (
