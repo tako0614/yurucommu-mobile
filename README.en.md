@@ -156,5 +156,27 @@ outcome requires an explicit state read, with no automatic resend. Closing or
 switching profiles retains an uncertain result, while changing accounts retires
 the old operation. Self-follow and writes without raw server relationship state
 are unavailable. Remote delivery depends on the connected server federation
-runtime; local App checks do not qualify delivery. Profile editing remains a
-separate unfinished feature.
+runtime; local App checks do not qualify delivery.
+
+### Edit your profile
+
+The existing own-profile action opens an editor for name, bio, avatar, header,
+follow approval and up to four metadata rows. It uses the server limits: name
+50 characters, bio 500, metadata labels/values 255 each. JPEG, PNG, GIF and WebP
+images reuse the existing media upload path; explicit URL input and removal are
+also supported.
+
+Only changed fields are submitted. A save verifies the current viewer, ACK,
+canonical stored profile and final viewer within one 15-second budget. Later
+per-field edits survive an earlier ACK. Unknown outcomes retain the draft and
+require an explicit read without automatic resubmission. Reads merge current
+stored values without clearing newer edits; discarding input requires confirmation.
+Drafts remain in memory for the current account; changing accounts retires its
+operations.
+
+Profile images load on explicit action. Only canonical selected-host media gets
+the bearer, and authenticated image responses must have a supported actual MIME
+and bounded body. Public remote images receive no bearer. Hiding the profile
+releases pending reads and object URLs. Stored profile, current readback, home
+refresh and federation delivery are separate outcomes; local App checks do not
+qualify real devices, genuine login, deployed hosts or remote delivery.

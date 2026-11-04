@@ -65,38 +65,58 @@ export function describeMobilePostMedia(
         return bad;
       raw = `/media/${encodeURIComponent(filename)}`;
     }
-    if (
-      typeof raw !== "string" ||
-      raw !== raw.trim() ||
-      /[\u0000-\u0020]/u.test(raw)
-    )
-      return bad;
-    let url: URL;
-    try {
-      url = new URL(raw, host);
-    } catch {
-      return bad;
-    }
-    if (
-      url.username ||
-      url.password ||
-      url.hash ||
-      (url.protocol !== "https:" &&
-        !(url.protocol === "http:" && url.origin === host.origin))
-    )
-      return bad;
-    const local = url.origin === host.origin;
-    // Only the canonical media route may receive the native bearer.
-    if (local && (!/^\/media\/[^/]+$/u.test(url.pathname) || url.search))
-      return bad;
-    return {
-      kind,
-      label,
-      url: url.href,
-      contentType,
-      authenticated: local,
-    };
+    return describeMediaUrl(raw, host, label, kind, contentType);
   });
+}
+
+function describeMediaUrl(
+  raw: unknown,
+  host: URL,
+  label: string,
+  kind: "image" | "video",
+  contentType: string,
+): MobileMediaSource {
+  if (
+    typeof raw !== "string" ||
+    raw !== raw.trim() ||
+    /[\u0000-\u0020]/u.test(raw)
+  )
+    return { ...unavailable, label };
+  let url: URL;
+  try {
+    url = new URL(raw, host);
+  } catch {
+    return { ...unavailable, label };
+  }
+  if (
+    url.username ||
+    url.password ||
+    url.hash ||
+    (url.protocol !== "https:" &&
+      !(url.protocol === "http:" && url.origin === host.origin))
+  )
+    return { ...unavailable, label };
+  const local = url.origin === host.origin;
+  // Only the canonical media route may receive the native bearer.
+  if (local && (!/^\/media\/[^/]+$/u.test(url.pathname) || url.search))
+    return { ...unavailable, label };
+  return {
+    kind,
+    label,
+    url: url.href,
+    contentType,
+    authenticated: local,
+  };
+}
+
+/** Profile icon/header fields declare image context, not an invented MIME. */
+export function describeMobileProfileImage(
+  value: unknown,
+  hostUrl: string,
+  label = "プロフィール画像",
+): readonly MobileMediaSource[] {
+  if (value === undefined || value === null || value === "") return [];
+  return [describeMediaUrl(value, new URL(hostUrl), label, "image", "image/*")];
 }
 
 /** Authenticated media stays on the selected host, never following a redirect. */
@@ -168,7 +188,9 @@ async function readMobileMediaBlob(
     .toLowerCase();
   const maximum = source.kind === "video" ? maxVideoFileSize : maxImageFileSize;
   if (
-    type !== source.contentType ||
+    (source.contentType === "image/*" && source.kind === "image"
+      ? !images.has(type ?? "")
+      : type !== source.contentType) ||
     !response.body ||
     Number(response.headers.get("content-length") ?? 0) > maximum
   ) {

@@ -6,6 +6,7 @@ import {
   type MobileProfile,
 } from "./profile-api.ts";
 import { createNotificationController } from "./notification-controller.ts";
+import { createProfileEditController } from "./profile-edit-controller.ts";
 import { createProfileFollowController } from "./profile-follow-controller.ts";
 import type { MobileNotificationPost } from "./notification-api.ts";
 export interface MobileProfileState {
@@ -47,6 +48,8 @@ export function createProfileController(options: {
   onBookmarksChanged?: () => void;
   onDeclined?: () => void;
   onRelationshipChanged?: () => Promise<void>;
+  onProfileChanged?: () => Promise<void>;
+  confirmDiscardProfile?: () => boolean | Promise<boolean>;
 }) {
   let session = snapshotFeedSession(options.session),
     key = keyOf(session),
@@ -80,6 +83,26 @@ export function createProfileController(options: {
       confirmDiscardReply: options.confirmDiscardReply,
     });
   let postController = makePosts();
+  const makeEditor = (): ReturnType<typeof createProfileEditController> =>
+    createProfileEditController({
+      session,
+      isActive: () =>
+        live() &&
+        state.visible &&
+        !state.loading &&
+        !state.error &&
+        state.actor !== null &&
+        (editor.getActorId() === null ||
+          state.actor.ap_id === editor.getActorId()),
+      onChange: changed,
+      confirmDiscard: options.confirmDiscardProfile,
+      onReceipt: (actor) => {
+        if (live() && state.visible && state.actor?.ap_id === actor.ap_id)
+          publish({ ...state, actor });
+      },
+      onSaved: options.onProfileChanged,
+    });
+  let editor = makeEditor();
   const relationships = new Map<
     string,
     ReturnType<typeof createProfileFollowController>
@@ -129,6 +152,7 @@ export function createProfileController(options: {
     // It must not rearm the relationship being retired in this same turn.
     retiringFollow = true;
     setFollowActive(false);
+    editor.pause();
     actorRead?.abort();
     actorRead = undefined;
     pageRead?.abort();
@@ -351,9 +375,11 @@ export function createProfileController(options: {
     cancel();
     postController.dispose();
     disposeRelationships();
+    editor.dispose();
     state = initial();
     acceptedIdentifier = undefined;
     postController = makePosts();
+    editor = makeEditor();
     changed();
   }
   function dispose() {
@@ -363,11 +389,13 @@ export function createProfileController(options: {
     cancel();
     postController.dispose();
     disposeRelationships();
+    editor.dispose();
     state = initial();
   }
   return {
     getState: () => state,
     getPostController: () => postController,
+    getEditor: () => editor,
     getFollowController: () =>
       state.actor ? relationships.get(state.actor.ap_id) : undefined,
     setFollowActive,

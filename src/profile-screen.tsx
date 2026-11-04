@@ -10,6 +10,7 @@ import type { createProfileController } from "./profile-controller.ts";
 import type { PostLikeStore } from "./post-like-controller.ts";
 import { NotificationScreen, postText } from "./notification-screen.tsx";
 import { PostMedia } from "./post-media.tsx";
+import { ProfileEdit } from "./profile-edit.tsx";
 import { PostLike } from "./post-like.tsx";
 export function ProfileScreen(props: {
   session: MobileSession;
@@ -37,9 +38,16 @@ export function ProfileScreen(props: {
     return props.controller.getFollowController();
   };
   const followState = () => follow()?.getState();
+  const editor = () => {
+    props.revision;
+    return props.controller.getEditor();
+  };
+  const editState = () => editor().getState();
+  let editTrigger: HTMLButtonElement | undefined;
   createRenderEffect(() =>
     props.controller.setFollowActive(
       state().visible &&
+        !editState().visible &&
         !state().loading &&
         !state().error &&
         postState().page === "home" &&
@@ -152,7 +160,32 @@ export function ProfileScreen(props: {
             </button>
           </div>
         </Show>
-        <Show when={state().actor && !state().loading && !state().error}>
+        <ProfileEdit
+          controller={editor()}
+          revision={props.revision}
+          session={props.session}
+          isActive={() => state().visible && props.isActive?.() !== false}
+          onBack={() => {
+            editor().close();
+            queueMicrotask(() => {
+              if (
+                state().visible &&
+                !editState().visible &&
+                props.isActive?.() !== false &&
+                editTrigger?.isConnected
+              )
+                editTrigger.focus();
+            });
+          }}
+        />
+        <Show
+          when={
+            state().actor &&
+            !state().loading &&
+            !state().error &&
+            !editState().visible
+          }
+        >
           <Show
             when={postState().page === "home"}
             fallback={
@@ -220,6 +253,18 @@ export function ProfileScreen(props: {
                       }
                     >
                       <p>自分のプロフィール</p>
+                      <button
+                        ref={editTrigger}
+                        type="button"
+                        class="text-button"
+                        onClick={() => {
+                          const id = state().actor?.ap_id;
+                          if (id && followState()?.isSelf === true)
+                            void editor().show(id);
+                        }}
+                      >
+                        プロフィールを編集
+                      </button>
                     </Show>
                     <Show when={value().busy}>
                       <p role="status">フォロー状態を確認中…</p>
@@ -239,9 +284,7 @@ export function ProfileScreen(props: {
               <Show when={state().actor!.icon_url}>
                 {(icon) => (
                   <PostMedia
-                    attachments={[
-                      { type: "Image", url: icon(), name: "プロフィール画像" },
-                    ]}
+                    profileImage={{ url: icon(), label: "プロフィール画像" }}
                     session={props.session}
                     isActive={() =>
                       state().visible && props.isActive?.() !== false
@@ -249,6 +292,21 @@ export function ProfileScreen(props: {
                   />
                 )}
               </Show>
+              <Show when={state().actor!.header_url}>
+                {(header) => (
+                  <PostMedia
+                    profileImage={{
+                      url: header(),
+                      label: "プロフィールのヘッダー画像",
+                    }}
+                    session={props.session}
+                    isActive={() =>
+                      state().visible && props.isActive?.() !== false
+                    }
+                  />
+                )}
+              </Show>
+
               <dl>
                 <dt>フォロワー</dt>
                 <dd>{state().actor!.follower_count ?? "不明"}</dd>
