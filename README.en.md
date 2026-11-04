@@ -74,12 +74,23 @@ credential name. Non-ASCII values and anchors are fine.
 
 - `/` (the feed; a Takosumi screen URL is this) and `/bookmarks` open the
   native feed and saved posts on the home screen.
+- `/notifications` opens the native notification list, and
+  `/post/<URL-encoded AP ID>` opens its target post inside the app. Pagination
+  uses the server cursor; failures have an explicit retry. Back preserves the
+  list and feed draft. Account changes and disposal fence old responses.
+  Retry repeats a failed continuation; Reload deliberately starts at page one.
 - Other screens are not in the app: the home screen stays and says so. They
   are not opened in an external browser, because there is no authenticated
   browser handoff.
 - A link for another saved server shows that server and waits for the user to
   switch; the route opens after the switch, or after sign-in when signed out.
-- Tapping a notification opens the feed, as before.
+- Notification taps use the same route screening and account handling.
+  An `event_id`-only notification opens the list; a same-host post path opens
+  that post. The app does not send its bearer to another origin or open an
+  unauthenticated external browser.
+
+These are source/portable app flows. OS push delivery, real-device cold/warm
+launch, signing and store distribution require separate qualification.
 
 Until store IDs exist, Takosumi screen interfaces do not declare `clients`.
 Universal links / App Links on a publisher domain are not set up.

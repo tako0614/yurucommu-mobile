@@ -112,3 +112,30 @@ body {
   color: var(--shell-label);
   font-size: 0.86rem;
 }
+.native-notifications {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  min-width: 0;
+}
+.native-notification-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.native-notifications p,
+.native-notification-post p {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.native-notification-card,
+.native-notification-post {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+.notification-unread {
+  color: var(--accent);
+  font-size: 0.8rem;
+}
