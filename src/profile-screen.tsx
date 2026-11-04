@@ -1,4 +1,4 @@
-import { createEffect, For, on, Show } from "solid-js";
+import { createEffect, createRenderEffect, For, on, Show } from "solid-js";
 import type { MobileSession } from "@takosjp/mobile-kit";
 import { formatMobilePreviewDate } from "@takosjp/mobile-kit";
 import {
@@ -32,6 +32,52 @@ export function ProfileScreen(props: {
     props.revision;
     return posts().getState();
   };
+  const follow = () => {
+    props.revision;
+    return props.controller.getFollowController();
+  };
+  const followState = () => follow()?.getState();
+  createRenderEffect(() =>
+    props.controller.setFollowActive(
+      state().visible &&
+        !state().loading &&
+        !state().error &&
+        postState().page === "home" &&
+        props.isActive?.() !== false,
+    ),
+  );
+  let followButton: HTMLButtonElement | undefined,
+    followReadButton: HTMLButtonElement | undefined;
+  async function followAction(readOnly: boolean) {
+    const operation = follow();
+    if (!operation) return;
+    const origin = readOnly ? followReadButton : followButton;
+    const restore = document.activeElement === origin;
+    const owned = await (readOnly ? operation.reload() : operation.change());
+    if (
+      !owned ||
+      !restore ||
+      operation !== follow() ||
+      !state().visible ||
+      state().loading ||
+      postState().page !== "home" ||
+      props.isActive?.() === false ||
+      document.activeElement !== document.body
+    )
+      return;
+    const value = operation.getState(),
+      target =
+        value.needsReload || value.status === null
+          ? followReadButton
+          : value.isSelf
+            ? heading
+            : followButton;
+    if (
+      target?.isConnected &&
+      (!(target instanceof HTMLButtonElement) || !target.disabled)
+    )
+      target.focus();
+  }
   let heading: HTMLHeadingElement | undefined,
     root: HTMLElement | undefined,
     postOrigin: HTMLButtonElement | undefined,
@@ -124,6 +170,72 @@ export function ProfileScreen(props: {
             <MobilePreviewCard class="native-notification-post">
               <p>{state().actor!.username ?? state().actor!.ap_id}</p>
               <p>{postText(state().actor!.summary ?? "")}</p>
+              <Show when={followState()}>
+                {(value) => (
+                  <div aria-label="フォロー操作">
+                    <Show
+                      when={value().isSelf === true}
+                      fallback={
+                        <>
+                          <Show when={value().status !== null}>
+                            <button
+                              ref={followButton}
+                              type="button"
+                              class="primary"
+                              disabled={!value().canChange}
+                              aria-label={
+                                value().status === "none"
+                                  ? "フォローする"
+                                  : value().status === "pending"
+                                    ? "フォロー申請を取り消す"
+                                    : "フォローを解除する"
+                              }
+                              onClick={() => void followAction(false)}
+                            >
+                              {value().busy
+                                ? "確認中…"
+                                : value().status === "none"
+                                  ? "フォローする"
+                                  : value().status === "pending"
+                                    ? "申請中・取り消す"
+                                    : "フォロー中・解除する"}
+                            </button>
+                          </Show>
+                          <Show
+                            when={
+                              value().needsReload || value().status === null
+                            }
+                          >
+                            <button
+                              ref={followReadButton}
+                              type="button"
+                              class="text-button"
+                              disabled={value().busy}
+                              onClick={() => void followAction(true)}
+                            >
+                              フォロー状態を確認
+                            </button>
+                          </Show>
+                        </>
+                      }
+                    >
+                      <p>自分のプロフィール</p>
+                    </Show>
+                    <Show when={value().busy}>
+                      <p role="status">フォロー状態を確認中…</p>
+                    </Show>
+                    <Show when={value().error}>
+                      <p role="alert">{value().error}</p>
+                    </Show>
+                    <Show when={value().message}>
+                      <p role="status">{value().message}</p>
+                    </Show>
+                    <Show when={value().refreshError}>
+                      <p role="alert">{value().refreshError}</p>
+                    </Show>
+                  </div>
+                )}
+              </Show>
               <Show when={state().actor!.icon_url}>
                 {(icon) => (
                   <PostMedia
@@ -173,6 +285,7 @@ export function ProfileScreen(props: {
                 type="button"
                 class="text-button"
                 onClick={() => void props.controller.reload()}
+                disabled={followState()?.busy}
               >
                 プロフィールを更新
               </button>

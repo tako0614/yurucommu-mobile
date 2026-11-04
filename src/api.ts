@@ -24,7 +24,7 @@ import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 export type MobileActor = Pick<
   Actor,
   "ap_id" | "preferred_username" | "name" | "icon_url"
->;
+> & { readonly following_count?: number };
 
 export type MobilePostVisibility = Post["visibility"];
 export interface MobileReplyTarget {
@@ -890,3 +890,6 @@ export async function unregisterPush(
 
 // Product readers share the same bounded JSON body decoder as mutations.
 export { readMutationAcknowledgement as readMobileResponseJson };
+
+// Product mutations install the supported SDK transport only at request creation.
+export { withYurucommuMobileTransport as withMobileApiTransport };
