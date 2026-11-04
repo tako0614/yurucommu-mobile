@@ -518,6 +518,41 @@ export function createNotificationController(options: {
     }
   }
 
+  // An in-app profile can cover this view without deleting its post or drafts.
+  function pause() {
+    if (disposed) return;
+    const reading = state.loading || state.loadingMore;
+    const readingReplies = state.repliesLoading || state.repliesLoadingMore;
+    const writingBookmark = state.bookmarkBusy;
+    if (state.loadingMore) failedContinuation = true;
+    else if (state.loading) failedContinuation = false;
+    if (state.repliesLoadingMore) failedRepliesContinuation = true;
+    else if (state.repliesLoading) failedRepliesContinuation = false;
+    request++;
+    cancelRead();
+    publish({
+      ...state,
+      loading: false,
+      loadingMore: false,
+      error: reading
+        ? "読み込みを中断しました。再試行してください。"
+        : state.error,
+      bookmarkBusy: false,
+      bookmarkNeedsReload: state.bookmarkNeedsReload || writingBookmark,
+      bookmarkError: writingBookmark
+        ? "保存結果が不明です。再読み込みで確認してください。"
+        : state.bookmarkError,
+      repliesLoading: false,
+      repliesLoadingMore: false,
+      repliesError: readingReplies
+        ? "返信の読み込みを中断しました。再試行してください。"
+        : state.repliesError,
+      replyDraft: state.post?.replyContext
+        ? replyComposer?.getState()
+        : undefined,
+    });
+  }
+
   function dispose() {
     disposed = true;
     cancelRead();
@@ -546,6 +581,7 @@ export function createNotificationController(options: {
     retry,
     reload,
     toggleBookmark,
+    pause,
     dispose,
   };
 }

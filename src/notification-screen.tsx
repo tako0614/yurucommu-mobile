@@ -27,7 +27,7 @@ const labels: Record<string, string> = {
 
 // Keep ActivityPub HTML inert. Content is displayed as text, without loading
 // remote images or treating a notification's content as executable markup.
-function postText(content: string): string {
+export function postText(content: string): string {
   const template = document.createElement("template");
   template.innerHTML = content;
   template.content
@@ -49,6 +49,7 @@ export function NotificationScreen(props: {
   isActive?: () => boolean;
   homeFocus?: () => HTMLElement | undefined;
   likes: PostLikeStore;
+  onOpenProfile: (identifier: string, trigger: HTMLButtonElement) => void;
 }) {
   let heading: HTMLHeadingElement | undefined;
   let openButton: HTMLButtonElement | undefined;
@@ -151,10 +152,22 @@ export function NotificationScreen(props: {
                 <li>
                   <MobilePreviewCard class="native-notification-card">
                     <p>
-                      <strong>
+                      <button
+                        type="button"
+                        class="text-button"
+                        data-profile-id={notification.actor.ap_id}
+                        aria-label={`${notification.actor.name || notification.actor.preferred_username || "通知の投稿者"}のプロフィールを開く`}
+                        onClick={(event) =>
+                          props.onOpenProfile(
+                            notification.actor.ap_id,
+                            event.currentTarget,
+                          )
+                        }
+                      >
                         {notification.actor.name ||
-                          notification.actor.preferred_username}
-                      </strong>{" "}
+                          notification.actor.preferred_username ||
+                          notification.actor.ap_id}
+                      </button>{" "}
                       が{labels[notification.type] ?? "通知を送りました"}
                     </p>
                     <time>
@@ -182,6 +195,25 @@ export function NotificationScreen(props: {
                         }
                       >
                         投稿を開く
+                      </button>
+                    </Show>
+                    <Show
+                      when={
+                        notification.target_kind === "profile" &&
+                        notification.target_id
+                      }
+                    >
+                      <button
+                        type="button"
+                        class="text-button"
+                        onClick={(event) =>
+                          props.onOpenProfile(
+                            notification.target_id!,
+                            event.currentTarget,
+                          )
+                        }
+                      >
+                        プロフィールを開く
                       </button>
                     </Show>
                   </MobilePreviewCard>
@@ -213,9 +245,22 @@ export function NotificationScreen(props: {
                   store={props.likes}
                 />
                 <p>
-                  <strong>
-                    {post().author.name || post().author.preferred_username}
-                  </strong>
+                  <button
+                    type="button"
+                    class="text-button"
+                    data-profile-id={post().author.ap_id}
+                    aria-label={`${post().author.name || post().author.preferred_username || "投稿者"}のプロフィールを開く`}
+                    onClick={(event) =>
+                      props.onOpenProfile(
+                        post().author.ap_id,
+                        event.currentTarget,
+                      )
+                    }
+                  >
+                    {post().author.name ||
+                      post().author.preferred_username ||
+                      post().author.ap_id}
+                  </button>
                 </p>
                 <p>{postText(post().content)}</p>
                 <PostMedia
@@ -344,10 +389,22 @@ export function NotificationScreen(props: {
                             }
                             store={props.likes}
                           />
-                          <strong>
+                          <button
+                            type="button"
+                            class="text-button"
+                            data-profile-id={reply.author.ap_id}
+                            aria-label={`${reply.author.name || reply.author.preferred_username || "投稿者"}のプロフィールを開く`}
+                            onClick={(event) =>
+                              props.onOpenProfile(
+                                reply.author.ap_id,
+                                event.currentTarget,
+                              )
+                            }
+                          >
                             {reply.author.name ||
-                              reply.author.preferred_username}
-                          </strong>
+                              reply.author.preferred_username ||
+                              reply.author.ap_id}
+                          </button>
                           <p>{postText(reply.content)}</p>
                           <PostMedia
                             attachments={reply.attachments}

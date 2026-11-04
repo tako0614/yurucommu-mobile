@@ -69,6 +69,7 @@ export function Feed(props: {
   likeActionsActive?: () => boolean;
   likes: PostLikeStore;
   onOpenPost: (apId: string, trigger: HTMLButtonElement) => void;
+  onOpenProfile: (identifier: string, trigger: HTMLButtonElement) => void;
 }) {
   const [state, setState] = createSignal<FeedState>({
     content: "",
@@ -98,6 +99,20 @@ export function Feed(props: {
   return (
     <div class="mobile-feed">
       <PostComposer controller={controller} state={state()} />
+      <Show when={props.home}>
+        {(home) => (
+          <button
+            type="button"
+            class="text-button"
+            data-profile-id={home().actor.ap_id}
+            onClick={(event) =>
+              props.onOpenProfile(home().actor.ap_id, event.currentTarget)
+            }
+          >
+            自分のプロフィールを開く
+          </button>
+        )}
+      </Show>
       <MobilePreviewSection
         title="フィード"
         detail={props.home ? `${posts().length}件` : undefined}
@@ -120,9 +135,22 @@ export function Feed(props: {
                           <img src={post.author.icon_url!} alt="" />
                         </Show>
                         <div>
-                          <strong>
-                            {post.author.name ?? post.author.preferred_username}
-                          </strong>
+                          <button
+                            type="button"
+                            class="text-button"
+                            data-profile-id={post.author.ap_id}
+                            aria-label={`${post.author.name || post.author.preferred_username || "投稿者"}のプロフィールを開く`}
+                            onClick={(event) =>
+                              props.onOpenProfile(
+                                post.author.ap_id,
+                                event.currentTarget,
+                              )
+                            }
+                          >
+                            {post.author.name ||
+                              post.author.preferred_username ||
+                              post.author.ap_id}
+                          </button>
                           <small>@{post.author.preferred_username}</small>
                         </div>
                       </div>
@@ -182,6 +210,7 @@ export function BookmarksPreview(props: {
   likeActionsActive?: () => boolean;
   likes: PostLikeStore;
   onOpenPost: (apId: string, trigger: HTMLButtonElement) => void;
+  onOpenProfile: (identifier: string, trigger: HTMLButtonElement) => void;
 }) {
   const [posts, setPosts] = createSignal<
     readonly import("./api.ts").MobilePost[]
@@ -268,9 +297,22 @@ export function BookmarksPreview(props: {
                 {(post) => (
                   <li>
                     <MobilePreviewCard class="feed-card">
-                      <strong>
-                        {post.author.name ?? post.author.preferred_username}
-                      </strong>
+                      <button
+                        type="button"
+                        class="text-button"
+                        data-profile-id={post.author.ap_id}
+                        aria-label={`${post.author.name || post.author.preferred_username || "投稿者"}のプロフィールを開く`}
+                        onClick={(event) =>
+                          props.onOpenProfile(
+                            post.author.ap_id,
+                            event.currentTarget,
+                          )
+                        }
+                      >
+                        {post.author.name ||
+                          post.author.preferred_username ||
+                          post.author.ap_id}
+                      </button>
                       <p>{post.content}</p>
                       <PostLike
                         session={props.session}
