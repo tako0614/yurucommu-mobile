@@ -15,7 +15,11 @@ import {
   type Actor,
   type ApiTransport,
   type Post,
+  type MediaAttachment,
+  validateFile,
+  FileValidationError,
 } from "@takosjp/yurucommu-api";
+import { snapshotFeedSession } from "./feed-session.ts";
 
 export type MobileActor = Pick<
   Actor,
@@ -24,11 +28,7 @@ export type MobileActor = Pick<
 
 export type MobilePost = Pick<
   Post,
-  | "ap_id"
-  | "content"
-  | "like_count"
-  | "reply_count"
-  | "author"
+  "ap_id" | "content" | "like_count" | "reply_count" | "author"
 > & { published: string | null; attachments?: Post["attachments"] };
 
 export interface YurucommuMobileHome {
@@ -40,11 +40,15 @@ export interface YurucommuMobileHome {
 export async function loadHome(
   session: MobileSession,
 ): Promise<YurucommuMobileHome> {
-  const requests = withYurucommuMobileTransport(session, () => [
-    fetchMobileCurrentActor(),
-    fetchMobileTimeline(),
-    fetchMobileUnreadCount(),
-  ] as const);
+  const requests = withYurucommuMobileTransport(
+    session,
+    () =>
+      [
+        fetchMobileCurrentActor(),
+        fetchMobileTimeline(),
+        fetchMobileUnreadCount(),
+      ] as const,
+  );
   const [actor, timeline, unread] = await Promise.all(requests);
   return {
     actor,
@@ -57,15 +61,258 @@ export async function createPost(
   session: MobileSession,
   content: string,
   visibility: "public" | "unlisted" | "followers" = "public",
+  attachments: readonly MediaAttachment[] = [],
+  signal?: AbortSignal,
 ): Promise<void> {
-  const post: unknown = await withYurucommuMobileTransport(session, () =>
-    createYurucommuPost({ content, visibility }),
+  const selected = snapshotFeedSession(session),
+    abort = new AbortController();
+  const cancel = () => abort.abort(signal?.reason);
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
+  const deadline = setTimeout(
+    () => abort.abort(new Error("投稿の結果を時間内に確認できませんでした。")),
+    15_000,
   );
-  if (!isRecord(post) || !nonEmptyString(post.ap_id)) {
-    throw new Error(
-      "投稿の結果を確認できませんでした。再送する前にフィードを確認してください。",
+  try {
+    if (abort.signal.aborted) throw abort.signal.reason;
+    const body: Parameters<typeof createYurucommuPost>[0] = {
+      content,
+      visibility,
+      ...(attachments.length
+        ? {
+            attachments: attachments.map(
+              ({ r2_key, content_type, url, name }) => ({
+                r2_key,
+                content_type,
+                ...(url === undefined ? {} : { url }),
+                ...(name === undefined ? {} : { name }),
+              }),
+            ),
+          }
+        : {}),
+    };
+    // Keep the public SDK request/type contract while retaining cancellation
+    // through the ACK body (SDK3.4 createPost has no caller-signal parameter).
+    const response = await withYurucommuMobileTransport(selected, () =>
+      apiFetch("/api/posts", {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+        timeoutMs: 0,
+        signal: abort.signal,
+        redirect: "error",
+        cache: "no-store",
+      }),
     );
+    if (!response.ok) throw await mutationError(response, "投稿");
+    const value = await readMutationAcknowledgement(
+      response,
+      128 * 1024,
+      "投稿",
+    );
+    if (
+      !isRecord(value) ||
+      !isRecord(value.post) ||
+      !nonEmptyString(value.post.ap_id)
+    )
+      throw new Error(
+        "投稿の結果を確認できませんでした。再送する前にフィードを確認してください。",
+      );
+  } finally {
+    clearTimeout(deadline);
+    signal?.removeEventListener("abort", cancel);
   }
+}
+
+export interface MobileUploadedAttachment extends MediaAttachment {
+  readonly expiresAt?: string;
+}
+
+const uploadExtensions: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+};
+
+export function validateMobileUpload(file: File): void {
+  if (!file.size) throw new Error("空のファイルは添付できません。");
+  // Core names stored media by generated ID/MIME, never by the input basename.
+  // Keep Unicode names as user-facing metadata; SDK3.4 only accepts ASCII names
+  // on the multipart File. Defer only its basename failure, then fully validate
+  // the actual renamed multipart File before sending it.
+  try {
+    validateFile(file);
+  } catch (cause) {
+    if (cause instanceof FileValidationError) {
+      // The real multipart File is renamed and fully revalidated below.
+      if (cause.code === "INVALID_FILENAME") return;
+      throw new Error(
+        cause.code === "FILE_TOO_LARGE"
+          ? "ファイルがアップロードできるサイズを超えています。"
+          : "このファイル形式は添付できません。JPEG・PNG・GIF・WebP・MP4・WebMを選んでください。",
+        { cause },
+      );
+    }
+    throw cause;
+  }
+}
+
+async function multipartUploadFile(file: File): Promise<File> {
+  // An independent buffer also avoids Bun1.3.14's shared File-name metadata
+  // when constructing a File from another File/slice. Uploads are serialized.
+  return new File(
+    [await file.arrayBuffer()],
+    `attachment.${uploadExtensions[file.type] ?? "bin"}`,
+    { type: file.type, lastModified: file.lastModified },
+  );
+}
+
+/** Published multipart endpoint + existing selected-account SDK transport. */
+export async function uploadPostMedia(
+  session: MobileSession,
+  file: File,
+  signal: AbortSignal,
+): Promise<MobileUploadedAttachment> {
+  const displayName = file.name.slice(0, 255);
+  const selectedSession = snapshotFeedSession(session);
+  validateMobileUpload(file);
+  if (signal.aborted) throw signal.reason;
+  const abort = new AbortController();
+  const cancel = () => abort.abort(signal.reason);
+  signal.addEventListener("abort", cancel, { once: true });
+  const deadline = setTimeout(
+    () =>
+      abort.abort(
+        new Error("アップロードの結果を時間内に確認できませんでした。"),
+      ),
+    60_000,
+  );
+  try {
+    const multipartFile = await multipartUploadFile(file);
+    validateFile(multipartFile);
+    if (abort.signal.aborted) throw abort.signal.reason;
+    const form = new FormData();
+    form.append("file", multipartFile);
+    // SDK uploadMedia has no caller signal. Reuse its public apiFetch and
+    // validateFile primitives so cancellation covers both upload and ACK body.
+    const response = await withYurucommuMobileTransport(selectedSession, () =>
+      apiFetch("/api/media/upload", {
+        method: "POST",
+        body: form,
+        timeoutMs: 0,
+        signal: abort.signal,
+        redirect: "error",
+        cache: "no-store",
+      }),
+    );
+    if (!response.ok) {
+      throw await mutationError(response, "アップロード");
+    }
+    const value: unknown = await readMutationAcknowledgement(
+      response,
+      16 * 1024,
+      "アップロード",
+    );
+    if (
+      !isRecord(value) ||
+      typeof value.r2_key !== "string" ||
+      !/^uploads\/[a-f0-9]+\.(jpg|png|gif|webp|mp4|webm)$/u.test(
+        value.r2_key,
+      ) ||
+      !value.r2_key.endsWith(`.${uploadExtensions[file.type]}`) ||
+      value.content_type !== file.type ||
+      typeof value.url !== "string" ||
+      value.url !== value.url.trim() ||
+      /[\u0000-\u0020]/u.test(value.url)
+    )
+      throw new Error("アップロードの応答を確認できませんでした。");
+    const host = new URL(selectedSession.hostUrl),
+      url = new URL(value.url, host);
+    const path = `/media/${value.r2_key.slice("uploads/".length)}`;
+    if (
+      url.origin !== host.origin ||
+      url.pathname !== path ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      throw new Error("アップロード先の応答を確認できませんでした。");
+    if (
+      value.expires_at !== undefined &&
+      (typeof value.expires_at !== "string" ||
+        !Number.isFinite(Date.parse(value.expires_at)) ||
+        Date.parse(value.expires_at) <= Date.now())
+    )
+      throw new Error("添付の有効期限を確認できませんでした。");
+    return {
+      r2_key: value.r2_key,
+      url: path,
+      content_type: file.type,
+      name: displayName,
+      ...(value.expires_at === undefined
+        ? {}
+        : { expiresAt: value.expires_at as string }),
+    };
+  } finally {
+    clearTimeout(deadline);
+    signal.removeEventListener("abort", cancel);
+  }
+}
+
+async function readMutationAcknowledgement(
+  response: Response,
+  maximum: number,
+  operation: string,
+): Promise<unknown> {
+  if (
+    !response.body ||
+    Number(response.headers.get("content-length") ?? 0) > maximum
+  ) {
+    void response.body?.cancel().catch(() => {});
+    throw new Error(`${operation}の応答を確認できませんでした。`);
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maximum)
+        throw new Error(`${operation}の応答が大きすぎます。`);
+      chunks.push(new Uint8Array(value));
+    }
+    return JSON.parse(await new Blob(chunks).text());
+  } catch (cause) {
+    void reader.cancel().catch(() => {});
+    throw cause;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function mutationError(
+  response: Response,
+  operation: string,
+): Promise<Error> {
+  let message = `${operation}できませんでした（${response.status}）。`;
+  try {
+    const value = await readMutationAcknowledgement(
+      response,
+      16 * 1024,
+      operation,
+    );
+    if (isRecord(value) && nonEmptyString(value.error))
+      message += ` ${value.error.slice(0, 500)}`;
+  } catch {
+    void response.body?.cancel().catch(() => {});
+  }
+  return new Error(message);
 }
 
 export async function loadYurucommuMobileBookmarksPage(
@@ -97,7 +344,9 @@ export function createYurucommuMobileTransport(
     resolveUrl(path) {
       const endpoint = new URL(path, `${host.origin}/`);
       if (endpoint.origin !== host.origin) {
-        throw new Error("Yurucommu API endpoint must stay on the connected host.");
+        throw new Error(
+          "Yurucommu API endpoint must stay on the connected host.",
+        );
       }
       return endpoint.toString();
     },
@@ -183,7 +432,8 @@ function decodeMobilePost(value: unknown): MobilePost {
     !isRecord(value.author) ||
     !nonEmptyString(value.author.ap_id) ||
     !nullableString(value.author.preferred_username) ||
-    (value.author.username !== undefined && !nullableString(value.author.username)) ||
+    (value.author.username !== undefined &&
+      !nullableString(value.author.username)) ||
     !nullableString(value.author.name) ||
     !nullableString(value.author.icon_url)
   ) {

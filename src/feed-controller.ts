@@ -1,8 +1,23 @@
 import { canSubmitMobileText, type MobileSession } from "@takosjp/mobile-kit";
-import { createPost } from "./api.ts";
+import {
+  createPost,
+  uploadPostMedia,
+  validateMobileUpload,
+  type MobileUploadedAttachment,
+} from "./api.ts";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 
 export type FeedVisibility = "public" | "unlisted" | "followers";
+export const MAX_MOBILE_ATTACHMENTS = 8;
+
+export interface FeedAttachment {
+  readonly id: number;
+  readonly name: string;
+  readonly contentType: string;
+  readonly previewUrl: string;
+  readonly phase: "queued" | "uploading" | "ready" | "error";
+  readonly error?: string;
+}
 
 export interface FeedState {
   readonly content: string;
@@ -11,6 +26,9 @@ export interface FeedState {
   readonly error: string;
   readonly status: string;
   readonly refreshError: string;
+  readonly attachments: readonly FeedAttachment[];
+  readonly attachmentError: string;
+  readonly canSubmit: boolean;
 }
 
 // One authority incarnation owns its draft and pending send. Its request keeps
@@ -33,13 +51,44 @@ export function createFeedController(options: {
   let error = "";
   let status = "";
   let refreshError = "";
+  let postAbort: AbortController | undefined;
+  let attachmentError = "";
+  let nextAttachmentId = 0;
+  type Entry = {
+    view: FeedAttachment;
+    file: File;
+    uploaded?: MobileUploadedAttachment;
+    abort?: AbortController;
+  };
+  const attachments = new Map<number, Entry>();
+  let pump: { authority: number; promise: Promise<void> } | undefined;
 
   function getState(): FeedState {
-    return { content, visibility, sending, error, status, refreshError };
+    return {
+      content,
+      visibility,
+      sending,
+      error,
+      status,
+      refreshError,
+      attachments: Array.from(attachments.values(), (entry) => entry.view),
+      attachmentError,
+      canSubmit:
+        canSubmitMobileText({
+          value: content,
+          disabled: sending,
+          maxLength: 500,
+        }) &&
+        Array.from(attachments.values()).every(
+          (entry) => entry.view.phase === "ready",
+        ),
+    };
   }
 
   function active(expected: number): boolean {
-    return !disposed && authority === expected && options.isActive?.() !== false;
+    return (
+      !disposed && authority === expected && options.isActive?.() !== false
+    );
   }
 
   function publish() {
@@ -63,20 +112,161 @@ export function createFeedController(options: {
   function clearDraft() {
     if (!active(authority)) return;
     content = "";
+    clearAttachments();
+    attachmentError = "";
     draftRevision += 1;
     publish();
   }
 
+  function releaseEntry(entry: Entry) {
+    entry.abort?.abort();
+    URL.revokeObjectURL(entry.view.previewUrl);
+  }
+
+  function clearAttachments() {
+    for (const entry of attachments.values()) releaseEntry(entry);
+    attachments.clear();
+  }
+
+  function removeAttachment(id: number) {
+    if (!active(authority)) return;
+    const entry = attachments.get(id);
+    if (!entry) return;
+    attachments.delete(id);
+    releaseEntry(entry);
+    draftRevision += 1;
+    publish();
+  }
+
+  function runUploads(): Promise<void> {
+    if (pump?.authority === authority) return pump.promise;
+    const expected = authority;
+    // Defer the loop one microtask so its pump owner exists before any await.
+    const promise = Promise.resolve().then(async () => {
+      try {
+        while (active(expected)) {
+          const entry = Array.from(attachments.values()).find(
+            (item) => item.view.phase === "queued",
+          );
+          if (!entry) return;
+          const id = entry.view.id;
+          const selected = snapshotFeedSession(session);
+          const abort = new AbortController();
+          entry.abort = abort;
+          entry.view = { ...entry.view, phase: "uploading", error: undefined };
+          publish();
+          try {
+            const uploaded = await uploadPostMedia(
+              selected,
+              entry.file,
+              abort.signal,
+            );
+            if (!active(expected) || attachments.get(id) !== entry) continue;
+            entry.uploaded = uploaded;
+            entry.view = { ...entry.view, phase: "ready" };
+          } catch (cause) {
+            if (!active(expected) || attachments.get(id) !== entry) continue;
+            entry.uploaded = undefined;
+            entry.view = {
+              ...entry.view,
+              phase: "error",
+              error: `${cause instanceof Error ? cause.message : "アップロードの結果を確認できませんでした。"} 自動で再送していません。`,
+            };
+          } finally {
+            entry.abort = undefined;
+            if (active(expected)) publish();
+          }
+        }
+      } finally {
+        if (pump?.authority === expected) pump = undefined;
+      }
+    });
+    pump = { authority: expected, promise };
+    return promise;
+  }
+
+  function addFiles(files: readonly File[]): Promise<void> {
+    if (!active(authority) || !files.length) return Promise.resolve();
+    if (attachments.size + files.length > MAX_MOBILE_ATTACHMENTS) {
+      attachmentError = `添付は${MAX_MOBILE_ATTACHMENTS}件までです。`;
+      publish();
+      return Promise.resolve();
+    }
+    try {
+      for (const file of files) validateMobileUpload(file);
+    } catch (cause) {
+      attachmentError =
+        cause instanceof Error ? cause.message : "添付を確認できませんでした。";
+      publish();
+      return Promise.resolve();
+    }
+    const selected: Entry[] = [];
+    try {
+      for (const file of files)
+        selected.push({
+          file,
+          view: {
+            id: ++nextAttachmentId,
+            name: file.name,
+            contentType: file.type,
+            previewUrl: URL.createObjectURL(file),
+            phase: "queued",
+          },
+        });
+    } catch {
+      selected.forEach(releaseEntry);
+      attachmentError = "添付のプレビューを作れませんでした。";
+      publish();
+      return Promise.resolve();
+    }
+    for (const entry of selected) attachments.set(entry.view.id, entry);
+    attachmentError = "";
+    draftRevision += 1;
+    publish();
+    return runUploads();
+  }
+
+  function retryAttachment(id: number): Promise<void> {
+    if (!active(authority)) return Promise.resolve();
+    const entry = attachments.get(id);
+    if (!entry || entry.view.phase !== "error") return Promise.resolve();
+    entry.view = { ...entry.view, phase: "queued", error: undefined };
+    draftRevision += 1;
+    publish();
+    return runUploads();
+  }
+
   async function submit() {
-    if (!active(authority) || !canSubmitMobileText({
-      value: content, disabled: sending, maxLength: 500,
-    })) return;
+    if (!active(authority) || !getState().canSubmit) return;
+    for (const entry of attachments.values()) {
+      if (
+        entry.uploaded?.expiresAt &&
+        Date.parse(entry.uploaded.expiresAt) <= Date.now()
+      ) {
+        entry.uploaded = undefined;
+        entry.view = {
+          ...entry.view,
+          phase: "error",
+          error: "添付の有効期限が切れました。再アップロードしてください。",
+        };
+      }
+    }
+    if (!getState().canSubmit) {
+      publish();
+      return;
+    }
     const expected = authority;
     const attempt = ++sendRevision;
     const revision = draftRevision;
     const submittedContent = content;
     const submittedVisibility = visibility;
     const submittedSession = snapshotFeedSession(session);
+    const submittedEntries = Array.from(attachments.values());
+    const submittedMedia = submittedEntries.map((entry) => ({
+      ...entry.uploaded!,
+    }));
+    const requestAbort = new AbortController();
+    postAbort = requestAbort;
     sending = true;
     error = "";
     status = "";
@@ -84,7 +274,13 @@ export function createFeedController(options: {
     publish();
     let accepted = false;
     try {
-      await createPost(submittedSession, submittedContent, submittedVisibility);
+      await createPost(
+        submittedSession,
+        submittedContent,
+        submittedVisibility,
+        submittedMedia,
+        requestAbort.signal,
+      );
       if (!active(expected)) return;
       accepted = true;
       status = "投稿を送信しました。";
@@ -92,15 +288,27 @@ export function createFeedController(options: {
         content = "";
         draftRevision += 1;
       }
+      // Retire only the files in this accepted post. New files/text selected
+      // while it was pending belong to the next draft, even on the same account.
+      for (const entry of submittedEntries) {
+        if (attachments.get(entry.view.id) === entry) {
+          attachments.delete(entry.view.id);
+          releaseEntry(entry);
+        }
+      }
     } catch (cause) {
       if (!active(expected)) return;
-      error = cause instanceof Error ? cause.message : "投稿の結果を確認できませんでした。";
+      error =
+        cause instanceof Error
+          ? cause.message
+          : "投稿の結果を確認できませんでした。";
       // A network or malformed acknowledgment can follow a committed POST.
       // Keep the draft and never infer that retrying the mutation is safe.
       if (!error.includes("再送する前に")) {
         error += " 再送する前にフィードを確認してください。";
       }
     } finally {
+      if (postAbort === requestAbort) postAbort = undefined;
       if (active(expected)) {
         sending = false;
         publish();
@@ -125,6 +333,10 @@ export function createFeedController(options: {
     if (key === sessionKey) return;
     sessionKey = key;
     authority += 1;
+    postAbort?.abort();
+    postAbort = undefined;
+    clearAttachments();
+    pump = undefined;
     sendRevision += 1;
     draftRevision += 1;
     content = "";
@@ -133,16 +345,32 @@ export function createFeedController(options: {
     error = "";
     status = "";
     refreshError = "";
+    attachmentError = "";
     publish();
   }
 
   function dispose() {
     disposed = true;
+    postAbort?.abort();
+    postAbort = undefined;
+    clearAttachments();
+    pump = undefined;
     authority += 1;
     sendRevision += 1;
     content = "";
     sending = false;
   }
 
-  return { getState, setDraft, setVisibility, clearDraft, submit, updateSession, dispose };
+  return {
+    getState,
+    setDraft,
+    setVisibility,
+    clearDraft,
+    addFiles,
+    removeAttachment,
+    retryAttachment,
+    submit,
+    updateSession,
+    dispose,
+  };
 }
