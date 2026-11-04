@@ -48,6 +48,7 @@ export function Feed(props: {
   session: MobileSession;
   isActive?: () => boolean;
   refreshHome: () => Promise<void>;
+  onOpenPost: (apId: string, trigger: HTMLButtonElement) => void;
 }) {
   const [state, setState] = createSignal<FeedState>({
     content: "", visibility: "public", sending: false,
@@ -196,6 +197,7 @@ export function Feed(props: {
                       <p>{post.content}</p>
                       <PostMedia attachments={post.attachments} session={props.session} isActive={props.isActive} />
                       <footer>
+                        <button type="button" class="text-button" data-post-id={post.ap_id} data-post-surface="feed" aria-label={`${post.author.name || post.author.preferred_username}の投稿を開く`} onClick={(event) => props.onOpenPost(post.ap_id, event.currentTarget)}>投稿を開く</button>
                         <span>♡ {post.like_count}</span>
                         <span>返信 {post.reply_count}</span>
                         <Show when={post.published}>
@@ -219,6 +221,7 @@ export function Feed(props: {
 export function BookmarksPreview(props: {
   session: MobileSession;
   isActive?: () => boolean;
+  onOpenPost: (apId: string, trigger: HTMLButtonElement) => void;
 }) {
   const [posts, setPosts] = createSignal<
     readonly import("./api.ts").MobilePost[]
@@ -287,12 +290,13 @@ export function BookmarksPreview(props: {
               <For each={posts().slice(0, 3)}>
                 {(post) => (
                   <li>
-                    <MobilePreviewCard>
+                    <MobilePreviewCard class="feed-card">
                       <strong>
                         {post.author.name ?? post.author.preferred_username}
                       </strong>
                       <p>{post.content}</p>
                       <PostMedia attachments={post.attachments} session={props.session} isActive={props.isActive} />
+                      <button type="button" class="text-button" data-post-id={post.ap_id} data-post-surface="bookmarks" aria-label={`${post.author.name || post.author.preferred_username}の投稿を開く`} onClick={(event) => props.onOpenPost(post.ap_id, event.currentTarget)}>投稿を開く</button>
                     </MobilePreviewCard>
                   </li>
                 )}

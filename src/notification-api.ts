@@ -88,7 +88,7 @@ export async function loadMobileNotificationPost(
     !nullableString(value.post.published) ||
     !validActor(value.post.author)
   ) {
-    throw new Error("通知先の投稿の応答を確認できませんでした。");
+    throw new Error("投稿の応答を確認できませんでした。");
   }
   return {
     ...normalizePost(value.post as unknown as Post),

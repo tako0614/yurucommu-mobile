@@ -175,7 +175,7 @@ test("a successful response containing another post is refused", async () => {
       session(),
       "https://remote.example/ap/posts/requested",
     ),
-  ).rejects.toThrow("通知先の投稿");
+  ).rejects.toThrow("投稿の応答");
 });
 
 for (const published of [undefined, { invalid: true }]) {
@@ -186,7 +186,7 @@ for (const published of [undefined, { invalid: true }]) {
         post: { ap_id: apId, content: "Target", author: actor(), published },
       })) as unknown as typeof fetch;
     await expect(loadMobileNotificationPost(session(), apId)).rejects.toThrow(
-      "通知先の投稿",
+      "投稿の応答",
     );
   });
 }
