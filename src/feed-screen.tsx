@@ -4,7 +4,7 @@ import {
 } from "solid-js";
 import {
   appendUniqueMobileItemsById, appendUniqueMobileItemsByKey,
-  canSubmitMobileText, confirmMobileAction, formatMobilePreviewDate,
+  confirmMobileAction, formatMobilePreviewDate,
   mobileTextRemaining, type MobileSession,
 } from "@takosjp/mobile-kit";
 import {
@@ -13,7 +13,8 @@ import {
   MobilePreviewSection, MobileSegmentedControl,
 } from "@takosjp/mobile-kit/solid";
 import { loadYurucommuMobileBookmarksPage, type YurucommuMobileHome } from "./api.ts";
-import { createFeedController, type FeedState } from "./feed-controller.ts";
+import { createFeedController, MAX_MOBILE_ATTACHMENTS, type FeedState } from "./feed-controller.ts";
+import { allowedMimeTypes, maxImageFileSize, maxVideoFileSize } from "@takosjp/yurucommu-api";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 import { PostMedia } from "./post-media.tsx";
 import {
@@ -51,6 +52,7 @@ export function Feed(props: {
   const [state, setState] = createSignal<FeedState>({
     content: "", visibility: "public", sending: false,
     error: "", status: "", refreshError: "",
+    attachments: [], attachmentError: "", canSubmit: false,
   });
   const controller = createFeedController({
     session: props.session,
@@ -63,9 +65,8 @@ export function Feed(props: {
   const content = () => state().content;
   const visibility = () => state().visibility;
   const sending = () => state().sending;
-  const canPost = () => canSubmitMobileText({
-    value: content(), maxLength: 500, disabled: sending(),
-  });
+  const canPost = () => state().canSubmit;
+  const attachmentIds = createMemo(() => state().attachments.map(item => item.id));
   const posts = () =>
     appendUniqueMobileItemsByKey(
       [],
@@ -89,6 +90,40 @@ export function Feed(props: {
               onInput={(event) => controller.setDraft(event.currentTarget.value)}
             />
           </MobileComposeField>
+          <MobileComposeField label="画像・動画を添付">
+            <span class="composer-file-picker" classList={{"is-disabled": state().attachments.length >= MAX_MOBILE_ATTACHMENTS}}>
+              <span aria-hidden="true">画像・動画を選ぶ</span>
+              <input type="file" multiple aria-label="画像・動画を添付" accept={allowedMimeTypes.join(",")}
+              disabled={state().attachments.length >= MAX_MOBILE_ATTACHMENTS}
+              onChange={(event) => {
+                const files = Array.from(event.currentTarget.files ?? []);
+                event.currentTarget.value = "";
+                void controller.addFiles(files);
+              }} />
+            </span>
+          </MobileComposeField>
+          <p class="composer-attachment-help">本文と一緒に投稿します。添付 {state().attachments.length}/{MAX_MOBILE_ATTACHMENTS}件・画像{maxImageFileSize / 1024 / 1024}MB／動画{maxVideoFileSize / 1024 / 1024}MBまで</p>
+          <Show when={state().attachmentError}>{message => <p role="alert">{message()}</p>}</Show>
+          <Show when={attachmentIds().length}>
+            <ul class="composer-attachments" aria-label="添付ファイル">
+              <For each={attachmentIds()}>{id => (
+                <Show when={state().attachments.find(item => item.id === id)}>{item => (
+                  <li>
+                    <Show when={item().contentType.startsWith("video/")} fallback={<img src={item().previewUrl} alt={item().name} />}>
+                      <video src={item().previewUrl} controls playsinline preload="metadata" aria-label={item().name} />
+                    </Show>
+                    <p>{item().name}</p>
+                    <p role="status">{{queued: "アップロード待ち", uploading: "アップロード中", ready: "アップロード済み", error: "アップロード失敗"}[item().phase]}</p>
+                    <Show when={item().error}>{message => <p role="alert">{message()}</p>}</Show>
+                    <div class="composer-attachment-actions">
+                      <Show when={item().phase === "error"}><button type="button" class="secondary" onClick={() => void controller.retryAttachment(id)}>再アップロード</button></Show>
+                      <button type="button" class="text-button" aria-label={`${item().name}を外す`} onClick={() => controller.removeAttachment(id)}>外す</button>
+                    </div>
+                  </li>
+                )}</Show>
+              )}</For>
+            </ul>
+          </Show>
           <MobileSegmentedControl
             ariaLabel="公開範囲"
             value={visibility()}
@@ -105,7 +140,7 @@ export function Feed(props: {
             <button
               class="text-button"
               type="button"
-              disabled={!content()}
+              disabled={!content() && !state().attachments.length}
               onClick={() => {
                 if (
                   confirmMobileAction({ message: "入力中の投稿を消しますか？" })
