@@ -39,22 +39,66 @@ export interface YurucommuMobileHome {
 
 export async function loadHome(
   session: MobileSession,
+  signal?: AbortSignal,
 ): Promise<YurucommuMobileHome> {
-  const requests = withYurucommuMobileTransport(
-    session,
+  return withMobileReadScope(session, signal, async (request) => {
+    const [actor, timeline, unread] = await Promise.all([
+      fetchMobileCurrentActor(request),
+      fetchMobileTimeline(request),
+      fetchMobileUnreadCount(request),
+    ]);
+    return { actor, posts: timeline, unread };
+  });
+}
+
+export type MobileReadRequest = (path: string) => Promise<Response>;
+
+/** Product-owned read lifetime; decoding stays inside its header+body budget. */
+export async function withMobileReadScope<T>(
+  session: MobileSession,
+  signal: AbortSignal | undefined,
+  read: (request: MobileReadRequest) => Promise<T>,
+): Promise<T> {
+  const selected = snapshotFeedSession(session),
+    owned = new AbortController();
+  const cancel = () => owned.abort(signal?.reason);
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
+  const deadline = setTimeout(
     () =>
-      [
-        fetchMobileCurrentActor(),
-        fetchMobileTimeline(),
-        fetchMobileUnreadCount(),
-      ] as const,
+      owned.abort(
+        new Error(
+          "読み込みを時間内に完了できませんでした。再試行してください。",
+        ),
+      ),
+    15_000,
   );
-  const [actor, timeline, unread] = await Promise.all(requests);
-  return {
-    actor,
-    posts: timeline,
-    unread,
+  const request: MobileReadRequest = (path) => {
+    if (owned.signal.aborted) return Promise.reject(owned.signal.reason);
+    // The SDK's default timer detaches the caller signal at headers. Its
+    // supported direct-signal option keeps this owner attached through JSON.
+    return withYurucommuMobileTransport(selected, () =>
+      apiFetch(path, {
+        signal: owned.signal,
+        timeoutMs: 0,
+        credentials: "omit",
+        redirect: "error",
+        cache: "no-store",
+      }),
+    );
   };
+  try {
+    if (owned.signal.aborted) throw owned.signal.reason;
+    return await read(request);
+  } catch (cause) {
+    if (owned.signal.aborted) throw owned.signal.reason;
+    throw cause;
+  } finally {
+    clearTimeout(deadline);
+    signal?.removeEventListener("abort", cancel);
+    // On a batch failure, stop its other unfinished responses too.
+    owned.abort();
+  }
 }
 
 export async function createPost(
@@ -317,16 +361,17 @@ async function mutationError(
 
 export async function loadYurucommuMobileBookmarksPage(
   session: MobileSession,
+  signal?: AbortSignal,
 ): Promise<MobilePost[]> {
-  const response = await withYurucommuMobileTransport(session, () =>
-    apiFetch("/api/bookmarks?limit=8"),
-  );
-  await assertOk(response, "Failed to load bookmarks");
-  const value: unknown = await response.json();
-  if (!isRecord(value) || !Array.isArray(value.posts)) {
-    throw new Error("Yurucommu bookmarks response is invalid.");
-  }
-  return value.posts.map(decodeMobilePost);
+  return withMobileReadScope(session, signal, async (request) => {
+    const response = await request("/api/bookmarks?limit=8");
+    await assertOk(response, "Failed to load bookmarks");
+    const value: unknown = await response.json();
+    if (!isRecord(value) || !Array.isArray(value.posts)) {
+      throw new Error("Yurucommu bookmarks response is invalid.");
+    }
+    return value.posts.map(decodeMobilePost);
+  });
 }
 
 /**
@@ -368,8 +413,10 @@ function withYurucommuMobileTransport<T>(
   }
 }
 
-async function fetchMobileUnreadCount(): Promise<number> {
-  const response = await apiFetch("/api/notifications/unread/count");
+async function fetchMobileUnreadCount(
+  request: MobileReadRequest,
+): Promise<number> {
+  const response = await request("/api/notifications/unread/count");
   await assertOk(response, "Failed to load unread notification count");
   const value: unknown = await response.json();
   if (
@@ -383,10 +430,12 @@ async function fetchMobileUnreadCount(): Promise<number> {
   return value.count;
 }
 
-async function fetchMobileTimeline(): Promise<MobilePost[]> {
+async function fetchMobileTimeline(
+  request: MobileReadRequest,
+): Promise<MobilePost[]> {
   // The published SDK's timeline helper substitutes [] for an absent posts
   // member. Validate the actual response before that fallback can hide it.
-  const response = await apiFetch("/api/timeline?limit=20");
+  const response = await request("/api/timeline?limit=20");
   await assertOk(response, "Failed to load timeline");
   const value: unknown = await response.json();
   if (!isRecord(value) || !Array.isArray(value.posts)) {
@@ -395,8 +444,10 @@ async function fetchMobileTimeline(): Promise<MobilePost[]> {
   return value.posts.map(decodeMobilePost);
 }
 
-async function fetchMobileCurrentActor(): Promise<MobileActor> {
-  const response = await apiFetch("/api/auth/me");
+async function fetchMobileCurrentActor(
+  request: MobileReadRequest,
+): Promise<MobileActor> {
+  const response = await request("/api/auth/me");
   if (response.status === 401 || response.status === 403) {
     throw new Error("Yurucommu session is no longer authorized.");
   }

@@ -11,13 +11,17 @@ interface Lifetime extends Snapshot {
   mounted: boolean;
   revision: number;
   pending?: Promise<YurucommuMobileHome>;
+  read?: AbortController;
   publish?: (snapshot: Snapshot) => void;
 }
 
 // The pinned shell supplies plain values to renderHomeExtra. Keep the product
 // view current through its owning loader, without changing shared-kit custody.
 export function createFeedHomeLoader(options: {
-  loadHome: (session: MobileSession) => Promise<YurucommuMobileHome>;
+  loadHome: (
+    session: MobileSession,
+    signal?: AbortSignal,
+  ) => Promise<YurucommuMobileHome>;
 }) {
   let lifetime: Lifetime | undefined;
 
@@ -26,26 +30,38 @@ export function createFeedHomeLoader(options: {
   }
 
   function publish(current: Lifetime) {
-    if (live(current)) current.publish?.({
-      session: current.session,
-      home: current.home,
-    });
+    if (live(current))
+      current.publish?.({
+        session: current.session,
+        home: current.home,
+      });
   }
 
   function mount(snapshot: Snapshot, listener: (snapshot: Snapshot) => void) {
     // Initial loading can precede mounting. Only that unmounted lifetime can
     // be adopted; signing out and back in always creates a new incarnation.
-    const current: Lifetime = lifetime && !lifetime.mounted &&
-        feedSessionIdentity(lifetime.session) === feedSessionIdentity(snapshot.session)
-      ? lifetime
-      : { ...snapshot, session: snapshotFeedSession(snapshot.session), revision: 0, mounted: false };
+    const current: Lifetime =
+      lifetime &&
+      !lifetime.mounted &&
+      feedSessionIdentity(lifetime.session) ===
+        feedSessionIdentity(snapshot.session)
+        ? lifetime
+        : {
+            ...snapshot,
+            session: snapshotFeedSession(snapshot.session),
+            revision: 0,
+            mounted: false,
+          };
+    const previous = lifetime;
     lifetime = current;
+    if (previous !== current) previous?.read?.abort();
     current.mounted = true;
     current.publish = listener;
     publish(current);
     return () => {
       current.publish = undefined;
       if (live(current)) lifetime = undefined;
+      current.read?.abort();
     };
   }
 
@@ -54,9 +70,12 @@ export function createFeedHomeLoader(options: {
       while (live(current)) {
         const revision = current.revision;
         const session = snapshotFeedSession(current.session);
+        const read = new AbortController();
+        current.read = read;
         try {
-          const home = await options.loadHome(session);
-          if (!live(current)) throw new Error("フィードの接続が変更されました。");
+          const home = await options.loadHome(session, read.signal);
+          if (!live(current))
+            throw new Error("フィードの接続が変更されました。");
           // Every overlap explicitly requested another refresh. Read once more
           // after the prior request, then settle all shell callers together.
           // An older response cannot overwrite a newer root or contact list.
@@ -70,6 +89,8 @@ export function createFeedHomeLoader(options: {
           current.home = undefined;
           publish(current);
           throw cause;
+        } finally {
+          if (current.read === read) current.read = undefined;
         }
       }
       throw new Error("フィードの接続が変更されました。");
@@ -80,14 +101,18 @@ export function createFeedHomeLoader(options: {
 
   function load(session: MobileSession): Promise<YurucommuMobileHome> {
     const current: Lifetime = lifetime ?? {
-      session: snapshotFeedSession(session), revision: 0, mounted: false,
+      session: snapshotFeedSession(session),
+      revision: 0,
+      mounted: false,
     };
     lifetime = current;
-    const changed = feedSessionIdentity(current.session) !== feedSessionIdentity(session);
+    const changed =
+      feedSessionIdentity(current.session) !== feedSessionIdentity(session);
     current.session = snapshotFeedSession(session);
     if (changed) current.home = undefined;
     publish(current);
     current.revision += 1;
+    if (changed) current.read?.abort();
     current.pending ??= Promise.resolve().then(() => settle(current));
     return current.pending;
   }
