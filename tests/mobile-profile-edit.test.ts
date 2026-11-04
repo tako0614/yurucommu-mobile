@@ -586,3 +586,25 @@ test("confirmed image association is reported saved while later text remains dir
   expect(c.getState().uploads.icon_url?.saved).toBe(true);
   expect(c.getState().dirty).toBe(true);
 });
+
+for (const nextName of ["New during reload", "Name"])
+  test("confirmed discard preserves fields touched while its GET is pending", async () => {
+    const calls = fixture(),
+      c = await ready(calls, { confirmDiscard: () => true });
+    c.setField("name", "Old discarded name");
+    c.setField("summary", "Old discarded summary");
+    const discarding = c.discard();
+    await until(() => calls.length === 3);
+    c.setField("name", nextName);
+    c.setField("is_private", true);
+    c.setField("fields", [{ name: "New field", value: "New value" }]);
+    await read(calls, 2, { name: "Server name", summary: "Server bio" });
+    expect(await discarding).toBe(true);
+    expect(c.getState().draft).toMatchObject({
+      name: nextName,
+      summary: "Server bio",
+      is_private: true,
+      fields: [{ name: "New field", value: "New value" }],
+    });
+    expect(c.getState().dirty).toBe(true);
+  });

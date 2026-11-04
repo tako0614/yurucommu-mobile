@@ -41,6 +41,9 @@ export function createProfileEditController(options: {
   confirmDiscard?: () => boolean | Promise<boolean>;
 }) {
   const session = snapshotFeedSession(options.session);
+  const fieldVersions = Object.fromEntries(
+    profileFormKeys.map((key) => [key, 0]),
+  ) as Record<keyof MobileProfileForm, number>;
   let disposed = false,
     visible = false,
     generation = 0,
@@ -152,19 +155,24 @@ export function createProfileEditController(options: {
     visible = false;
     publish();
   }
-  function merge(actor: MobileProfile, reset: boolean, attempt = attempted) {
+  function merge(
+    actor: MobileProfile,
+    resetVersions?: Record<keyof MobileProfileForm, number>,
+    attempt = attempted,
+  ) {
     const previous = base ? profileForm(base) : null,
       next = profileForm(actor),
       kept = copy(draft);
     for (const key of profileFormKeys) {
       if (
-        reset ||
-        !previous ||
-        same(draft[key], previous[key]) ||
-        (attempt &&
-          key in attempt.patch &&
-          same(draft[key], attempt.draft[key]) &&
-          same(next[key], attempt.patch[key]))
+        resetVersions
+          ? fieldVersions[key] === resetVersions[key]
+          : !previous ||
+            same(draft[key], previous[key]) ||
+            (attempt &&
+              key in attempt.patch &&
+              same(draft[key], attempt.draft[key]) &&
+              same(next[key], attempt.patch[key]))
       )
         Object.assign(kept, { [key]: next[key] });
     }
@@ -189,6 +197,7 @@ export function createProfileEditController(options: {
   }
   async function read(reset = false): Promise<boolean> {
     if (!live() || !actorId || loading || saving || imageBusy()) return false;
+    const resetVersions = reset ? { ...fieldVersions } : undefined;
     const owner = ++generation,
       abort = new AbortController(),
       recovering = uncertain;
@@ -206,7 +215,7 @@ export function createProfileEditController(options: {
         abort.signal,
       );
       if (!current(owner)) return false;
-      merge(actor, reset);
+      merge(actor, resetVersions);
       attempted = undefined;
       loading = false;
       needsReload = false;
@@ -265,7 +274,7 @@ export function createProfileEditController(options: {
         abort.signal,
       );
       if (!current(owner)) return false;
-      merge(actor, false);
+      merge(actor);
       attempted = undefined;
       saving = false;
       uncertain = false;
@@ -305,6 +314,7 @@ export function createProfileEditController(options: {
       delete uploaded[imageKey];
     }
     draft = copy({ ...draft, [key]: value });
+    fieldVersions[key]++;
     revision++;
     message = "";
     if (!needsReload && !saving && !loading) error = "";
@@ -333,6 +343,7 @@ export function createProfileEditController(options: {
       if (!current(owner) || imageVersions[key] !== version) return false;
       uploaded[key] = result;
       draft = { ...draft, [key]: result.url };
+      fieldVersions[key]++;
       revision++;
       message = "";
       uploads[key] = { name: file.name, phase: "ready", error: "" };
