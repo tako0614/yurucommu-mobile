@@ -84,7 +84,7 @@ export async function loadMobileNotificationPost(
       throw new Error("投稿の応答を確認できませんでした。");
     }
     return recordMobilePostLikeRead(
-      decodePost(value.post),
+      decodeMobileNotificationPost(value.post),
       selected,
       startedAt,
     );
@@ -129,7 +129,11 @@ export async function loadMobilePostReplies(
       replies: value.replies.map((reply) => {
         if (!record(reply) || reply.in_reply_to !== parentId)
           throw new Error("返信先が一致しない応答を受け取りました。");
-        return recordMobilePostLikeRead(decodePost(reply), selected, startedAt);
+        return recordMobilePostLikeRead(
+          decodeMobileNotificationPost(reply),
+          selected,
+          startedAt,
+        );
       }),
       hasMore: value.has_more,
       nextCursor: (value.next_cursor as string | null | undefined) ?? null,
@@ -137,7 +141,9 @@ export async function loadMobilePostReplies(
   });
 }
 
-function decodePost(value: unknown): MobileNotificationPost {
+export function decodeMobileNotificationPost(
+  value: unknown,
+): MobileNotificationPost {
   if (
     !record(value) ||
     !nonEmpty(value.ap_id) ||

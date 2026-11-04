@@ -887,3 +887,6 @@ export async function unregisterPush(
     pushkey: input.registration.token,
   });
 }
+
+// Product readers share the same bounded JSON body decoder as mutations.
+export { readMutationAcknowledgement as readMobileResponseJson };

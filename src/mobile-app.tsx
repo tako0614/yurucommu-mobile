@@ -32,6 +32,8 @@ import {
   type HostRouteNotice,
   type NativeNotificationRouteRequest,
 } from "./host-route.ts";
+import { createProfileController } from "./profile-controller.ts";
+import { ProfileScreen } from "./profile-screen.tsx";
 import { createPostLikeStore } from "./post-like-controller.ts";
 import { createNotificationController } from "./notification-controller.ts";
 import { NotificationScreen } from "./notification-screen.tsx";
@@ -107,6 +109,26 @@ export function createYurucommuMobileApp(
         onCleanup(() => likes.dispose());
         const [notificationRevision, setNotificationRevision] = createSignal(0);
         const [bookmarkRevision, setBookmarkRevision] = createSignal(0);
+        const [profileRevision, setProfileRevision] = createSignal(0);
+        const profiles = createProfileController({
+          session: context.session,
+          isActive: () => current.active,
+          onChange: () => setProfileRevision((value) => value + 1),
+          onDeclined: () => restoreProfileFocus(),
+          onBookmarksChanged: () => setBookmarkRevision((value) => value + 1),
+          onPostReplied: () => actions().refreshHome(),
+          confirmDiscardReply: () =>
+            confirmMobileAction({
+              message:
+                "別のプロフィールへ移ると、そのプロフィール内の返信下書き・添付・未確認の送信結果を閉じします。移動しますか？",
+            }),
+        });
+        const profileState = () => {
+          profileRevision();
+          return profiles.getState();
+        };
+        createRenderEffect(() => profiles.updateSession(session()));
+        onCleanup(() => profiles.dispose());
         const notifications = createNotificationController({
           session: context.session,
           isActive: () => current.active,
@@ -122,6 +144,53 @@ export function createYurucommuMobileApp(
         const notificationState = () => {
           notificationRevision();
           return notifications.getState();
+        };
+        let mainRoot: HTMLDivElement | undefined;
+        let profileOrigin:
+          { trigger: HTMLButtonElement; id: string; scope: string } | undefined;
+        const profileFocusScope = () =>
+          JSON.stringify([
+            feedSessionIdentity(session()),
+            session().apiBaseUrl,
+          ]);
+        const restoreProfileFocus = () =>
+          queueMicrotask(() => {
+            if (!current.active || profileState().visible) return;
+            // Do not move focus away from a control already chosen in the
+            // restored view (including a newer post/notification heading).
+            if (
+              document.activeElement !== document.body &&
+              mainRoot?.contains(document.activeElement)
+            )
+              return;
+            const origin = profileOrigin;
+            if (origin && origin.scope !== profileFocusScope()) return;
+            const target = origin?.trigger.isConnected
+              ? origin.trigger
+              : (Array.from(
+                  mainRoot?.querySelectorAll<HTMLButtonElement>(
+                    "button[data-profile-id]",
+                  ) ?? [],
+                ).find((button) => button.dataset.profileId === origin?.id) ??
+                mainRoot);
+            if (target?.isConnected) target.focus();
+          });
+        const openProfile = async (
+          identifier: string | null,
+          trigger?: HTMLButtonElement,
+        ) => {
+          if (!current.active) return;
+          if (!profileState().visible) {
+            profileOrigin = trigger
+              ? { trigger, id: identifier ?? "", scope: profileFocusScope() }
+              : undefined;
+            notifications.pause();
+          }
+          await profiles.open(identifier);
+        };
+        const closeProfile = () => {
+          profiles.close();
+          restoreProfileFocus();
         };
         let homeRoot: HTMLDivElement | undefined;
         let postOrigin:
@@ -182,6 +251,12 @@ export function createYurucommuMobileApp(
           )
             return;
           adoptedRoute = request;
+          if (request.target.page === "profile") {
+            void openProfile(request.target.identifier);
+            return;
+          }
+          profiles.close();
+          profileOrigin = undefined;
           if (request.target.page === "notifications")
             void notifications.openNotifications();
           else if (request.target.page === "post")
@@ -196,6 +271,7 @@ export function createYurucommuMobileApp(
               feedSessionIdentity(session())
             ) {
               postOrigin = undefined;
+              profileOrigin = undefined;
               if (adoptedRoute && requestedRoute() === adoptedRoute)
                 setRequestedRoute(undefined);
               adoptedRoute = undefined;
@@ -218,38 +294,58 @@ export function createYurucommuMobileApp(
               session={session()}
               onDismiss={() => setRouteNotice(undefined)}
             />
-            <NotificationScreen
+            <ProfileScreen
               session={session()}
-              state={notificationState()}
-              controller={notifications}
-              isActive={() => current.active}
-              homeFocus={homeFocus}
+              controller={profiles}
+              revision={profileRevision()}
               likes={likes}
+              isActive={() => current.active}
+              onClose={closeProfile}
+              onOpenProfile={openProfile}
             />
-            <div
-              ref={homeRoot}
-              tabIndex={-1}
-              role="region"
-              aria-label="フィードと保存した投稿"
-              hidden={notificationState().page !== "home"}
-            >
-              <Feed
-                home={home()}
+            <div ref={mainRoot} tabIndex={-1} hidden={profileState().visible}>
+              <NotificationScreen
+                onOpenProfile={openProfile}
                 session={session()}
-                refreshHome={() => actions().refreshHome()}
+                state={notificationState()}
+                controller={notifications}
+                isActive={() => current.active && !profileState().visible}
+                homeFocus={homeFocus}
                 likes={likes}
-                likeActionsActive={() => notificationState().page === "home"}
-                isActive={() => current.active}
-                onOpenPost={openPost}
               />
-              <BookmarksPreview
-                likes={likes}
-                likeActionsActive={() => notificationState().page === "home"}
-                revision={bookmarkRevision()}
-                session={session()}
-                isActive={() => current.active}
-                onOpenPost={openPost}
-              />
+              <div
+                ref={homeRoot}
+                tabIndex={-1}
+                role="region"
+                aria-label="フィードと保存した投稿"
+                hidden={notificationState().page !== "home"}
+              >
+                <Feed
+                  home={home()}
+                  session={session()}
+                  refreshHome={() => actions().refreshHome()}
+                  likes={likes}
+                  likeActionsActive={() =>
+                    notificationState().page === "home" &&
+                    !profileState().visible
+                  }
+                  isActive={() => current.active}
+                  onOpenPost={openPost}
+                  onOpenProfile={openProfile}
+                />
+                <BookmarksPreview
+                  likes={likes}
+                  likeActionsActive={() =>
+                    notificationState().page === "home" &&
+                    !profileState().visible
+                  }
+                  revision={bookmarkRevision()}
+                  session={session()}
+                  isActive={() => current.active}
+                  onOpenPost={openPost}
+                  onOpenProfile={openProfile}
+                />
+              </div>
             </div>
           </>
         );

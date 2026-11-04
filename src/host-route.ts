@@ -23,7 +23,8 @@ export interface HostRouteHandoffInput {
 export type NativeNotificationRoute =
   | { readonly page: "home" }
   | { readonly page: "notifications" }
-  | { readonly page: "post"; readonly apId: string };
+  | { readonly page: "post"; readonly apId: string }
+  | { readonly page: "profile"; readonly identifier: string | null };
 
 export interface NativeNotificationRouteRequest {
   readonly session: MobileSession;
@@ -74,6 +75,23 @@ export function createHostRouteHandoff(
       onNativeRoute({ session, target: { page: "notifications" } });
       onNotice(undefined);
       return;
+    }
+    if (
+      onNativeRoute &&
+      (path === "/profile" ||
+        path.startsWith("/profile/") ||
+        path.startsWith("/users/"))
+    ) {
+      const prefix = path.startsWith("/users/") ? "/users/" : "/profile/";
+      const identifier =
+        path === "/profile"
+          ? null
+          : decodeURIComponent(path.slice(prefix.length));
+      if (identifier === null || identifier.trim()) {
+        onNativeRoute({ session, target: { page: "profile", identifier } });
+        onNotice(undefined);
+        return;
+      }
     }
     if (onNativeRoute && path.startsWith("/post/")) {
       const apId = decodeURIComponent(path.slice("/post/".length));

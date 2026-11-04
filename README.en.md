@@ -136,3 +136,16 @@ A read started before the change cannot downgrade its confirmed viewer flag/coun
 the app retires its old request and fences late results. Cancellation does not promise server-side rollback.
 Portable/local HTTP/intercepted-browser checks do not qualify real device login,
 installed servers, push delivery or distribution.
+
+### Native profiles
+
+Author actions in feed, saved posts, details, replies and notifications open a
+profile and its posts through the selected server. Own-profile and selected-host
+`/profile`, `/profile/<identifier>` and `/users/<username>` links stay in the app.
+No bearer is sent to an actor's origin and no authenticated browser is assumed.
+
+Post lists support continuation, retry and returning from details. The original
+view's draft and the profile conversation draft remain independent. Switching to
+a different profile asks before discarding that conversation's draft, media or
+uncertain send result. Missing remote counts remain unknown. Follow/unfollow and
+profile editing remain separate unfinished features.
