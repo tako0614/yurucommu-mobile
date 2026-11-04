@@ -1,5 +1,7 @@
 import { createEffect, For, on, Show } from "solid-js";
 import { formatMobilePreviewDate } from "@takosjp/mobile-kit";
+import type { MobileSession } from "@takosjp/mobile-kit";
+import { PostMedia } from "./post-media.tsx";
 import {
   MobilePreviewCard,
   MobilePreviewList,
@@ -37,6 +39,7 @@ function postText(content: string): string {
 }
 
 export function NotificationScreen(props: {
+  session: MobileSession;
   state: NotificationState;
   controller: Controller;
 }) {
@@ -179,6 +182,7 @@ export function NotificationScreen(props: {
                 </strong>
               </p>
               <p>{postText(post().content)}</p>
+              <PostMedia attachments={post().attachments} session={props.session} />
               <Show when={post().published} fallback={<span>日時不明</span>}>
                 {(published) => (
                   <time dateTime={published()}>

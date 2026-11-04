@@ -29,7 +29,7 @@ export type MobilePost = Pick<
   | "like_count"
   | "reply_count"
   | "author"
-> & { published: string | null };
+> & { published: string | null; attachments?: Post["attachments"] };
 
 export interface YurucommuMobileHome {
   actor: MobileActor;
