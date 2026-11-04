@@ -42,6 +42,8 @@ export function NotificationScreen(props: {
   session: MobileSession;
   state: NotificationState;
   controller: Controller;
+  isActive?: () => boolean;
+  homeFocus?: () => HTMLElement | undefined;
 }) {
   let heading: HTMLHeadingElement | undefined;
   let openButton: HTMLButtonElement | undefined;
@@ -51,8 +53,9 @@ export function NotificationScreen(props: {
       (page, previous) => {
         if (page === previous) return;
         queueMicrotask(() => {
-          if (props.state.page !== page) return;
-          const target = page === "home" ? openButton : heading;
+          if (props.state.page !== page || props.isActive?.() === false) return;
+          const target =
+            page === "home" ? (props.homeFocus?.() ?? openButton) : heading;
           if (target?.isConnected) target.focus();
         });
       },
@@ -182,7 +185,10 @@ export function NotificationScreen(props: {
                 </strong>
               </p>
               <p>{postText(post().content)}</p>
-              <PostMedia attachments={post().attachments} session={props.session} />
+              <PostMedia
+                attachments={post().attachments}
+                session={props.session}
+              />
               <Show when={post().published} fallback={<span>日時不明</span>}>
                 {(published) => (
                   <time dateTime={published()}>

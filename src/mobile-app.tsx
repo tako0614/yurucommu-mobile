@@ -107,6 +107,54 @@ export function createYurucommuMobileApp(
           notificationRevision();
           return notifications.getState();
         };
+        let homeRoot: HTMLDivElement | undefined;
+        let postOrigin:
+          | {
+              trigger: HTMLButtonElement;
+              sessionKey: string;
+              id: string;
+              surface: string | undefined;
+            }
+          | undefined;
+        const openPost = (id: string, trigger: HTMLButtonElement) => {
+          if (!current.active) return;
+          postOrigin = {
+            trigger,
+            sessionKey: feedSessionIdentity(session()),
+            id,
+            surface: trigger.dataset.postSurface,
+          };
+          void notifications.openPost(id);
+        };
+        const homeFocus = (): HTMLElement | undefined => {
+          const origin = postOrigin;
+          postOrigin = undefined;
+          if (
+            !origin ||
+            !current.active ||
+            feedSessionIdentity(session()) !== origin.sessionKey
+          )
+            return;
+          if (origin.trigger.isConnected && !origin.trigger.closest("[hidden]"))
+            return origin.trigger;
+          // A refresh can replace card nodes while detail is open. Resolve the
+          // equivalent card within this view using values, never a dynamic selector.
+          return (
+            Array.from(
+              homeRoot?.querySelectorAll<HTMLButtonElement>(
+                "button[data-post-id]",
+              ) ?? [],
+            ).find(
+              (button) =>
+                button.dataset.postId === origin.id &&
+                button.dataset.postSurface === origin.surface,
+            ) ?? homeRoot
+          );
+        };
+        createRenderEffect(() => {
+          if (notificationState().page === "notifications")
+            postOrigin = undefined;
+        });
         let adoptedRoute: NativeNotificationRouteRequest | undefined;
         createRenderEffect(() => {
           const request = requestedRoute();
@@ -131,6 +179,7 @@ export function createYurucommuMobileApp(
               feedSessionIdentity(snapshot.session) !==
               feedSessionIdentity(session())
             ) {
+              postOrigin = undefined;
               if (adoptedRoute && requestedRoute() === adoptedRoute)
                 setRequestedRoute(undefined);
               adoptedRoute = undefined;
@@ -157,17 +206,27 @@ export function createYurucommuMobileApp(
               session={session()}
               state={notificationState()}
               controller={notifications}
+              isActive={() => current.active}
+              homeFocus={homeFocus}
             />
-            <div hidden={notificationState().page !== "home"}>
+            <div
+              ref={homeRoot}
+              tabIndex={-1}
+              role="region"
+              aria-label="フィードと保存した投稿"
+              hidden={notificationState().page !== "home"}
+            >
               <Feed
                 home={home()}
                 session={session()}
                 refreshHome={() => actions().refreshHome()}
                 isActive={() => current.active}
+                onOpenPost={openPost}
               />
               <BookmarksPreview
                 session={session()}
                 isActive={() => current.active}
+                onOpenPost={openPost}
               />
             </div>
           </>
