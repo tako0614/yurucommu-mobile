@@ -32,6 +32,7 @@ import {
   type HostRouteNotice,
   type NativeNotificationRouteRequest,
 } from "./host-route.ts";
+import { createPostLikeStore } from "./post-like-controller.ts";
 import { createNotificationController } from "./notification-controller.ts";
 import { NotificationScreen } from "./notification-screen.tsx";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
@@ -98,6 +99,12 @@ export function createYurucommuMobileApp(
         const [home, setHome] = createSignal(context.home);
         const [session, setSession] = createSignal(context.session);
         const [actions, setActions] = createSignal(context);
+        const likes = createPostLikeStore({
+          session: context.session,
+          isActive: () => current.active,
+        });
+        createRenderEffect(() => likes.updateSession(session()));
+        onCleanup(() => likes.dispose());
         const [notificationRevision, setNotificationRevision] = createSignal(0);
         const [bookmarkRevision, setBookmarkRevision] = createSignal(0);
         const notifications = createNotificationController({
@@ -217,6 +224,7 @@ export function createYurucommuMobileApp(
               controller={notifications}
               isActive={() => current.active}
               homeFocus={homeFocus}
+              likes={likes}
             />
             <div
               ref={homeRoot}
@@ -229,10 +237,14 @@ export function createYurucommuMobileApp(
                 home={home()}
                 session={session()}
                 refreshHome={() => actions().refreshHome()}
+                likes={likes}
+                likeActionsActive={() => notificationState().page === "home"}
                 isActive={() => current.active}
                 onOpenPost={openPost}
               />
               <BookmarksPreview
+                likes={likes}
+                likeActionsActive={() => notificationState().page === "home"}
                 revision={bookmarkRevision()}
                 session={session()}
                 isActive={() => current.active}

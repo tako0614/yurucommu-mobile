@@ -1,4 +1,5 @@
 import type { MobileSession } from "@takosjp/mobile-kit";
+import { snapshotFeedSession } from "./feed-session.ts";
 import {
   assertOk,
   normalizeNotification,
@@ -6,7 +7,11 @@ import {
   type Notification,
   type Post,
 } from "@takosjp/yurucommu-api";
-import { withMobileReadScope, type MobilePostVisibility } from "./api.ts";
+import {
+  withMobileReadScope,
+  recordMobilePostLikeRead,
+  type MobilePostVisibility,
+} from "./api.ts";
 
 export interface MobileNotificationsPage {
   readonly notifications: readonly Notification[];
@@ -21,6 +26,7 @@ export type MobileNotificationPost = Omit<Post, "published"> & {
   // Normalization supplies false for a missing flag; that is insufficient
   // authority for a mutation. Preserve unknown state for the native action.
   readonly bookmarkState: boolean | null;
+  readonly likeState: boolean | null;
   readonly replyContext: Readonly<{
     visibility: MobilePostVisibility;
     communityApId: string | null;
@@ -68,14 +74,20 @@ export async function loadMobileNotificationPost(
   if (!nonEmpty(apId)) throw new Error("投稿の識別子が不正です。");
   // Even a remote AP ID is looked up through the connected server. Never send
   // its native bearer directly to the object's origin.
-  return withMobileReadScope(session, signal, async (request) => {
+  const selected = snapshotFeedSession(session);
+  return withMobileReadScope(selected, signal, async (request) => {
+    const startedAt = performance.now();
     const response = await request(`/api/posts/${encodeURIComponent(apId)}`);
     await assertOk(response, "投稿を読み込めませんでした。");
     const value: unknown = await response.json();
     if (!record(value) || !record(value.post) || value.post.ap_id !== apId) {
       throw new Error("投稿の応答を確認できませんでした。");
     }
-    return decodePost(value.post);
+    return recordMobilePostLikeRead(
+      decodePost(value.post),
+      selected,
+      startedAt,
+    );
   });
 }
 
@@ -95,7 +107,9 @@ export async function loadMobilePostReplies(
     throw new Error("返信先または続きの位置が不正です。");
   const query = new URLSearchParams({ limit: "20" });
   if (before !== undefined) query.set("before", before);
-  return withMobileReadScope(session, signal, async (request) => {
+  const selected = snapshotFeedSession(session);
+  return withMobileReadScope(selected, signal, async (request) => {
+    const startedAt = performance.now();
     const response = await request(
       `/api/posts/${encodeURIComponent(parentId)}/replies?${query}`,
     );
@@ -115,7 +129,7 @@ export async function loadMobilePostReplies(
       replies: value.replies.map((reply) => {
         if (!record(reply) || reply.in_reply_to !== parentId)
           throw new Error("返信先が一致しない応答を受け取りました。");
-        return decodePost(reply);
+        return recordMobilePostLikeRead(decodePost(reply), selected, startedAt);
       }),
       hasMore: value.has_more,
       nextCursor: (value.next_cursor as string | null | undefined) ?? null,
@@ -136,6 +150,12 @@ function decodePost(value: unknown): MobileNotificationPost {
   return {
     ...normalizePost(value as unknown as Post),
     published: value.published,
+    likeState:
+      typeof value.liked === "boolean" &&
+      Number.isSafeInteger(value.like_count) &&
+      Number(value.like_count) >= 0
+        ? value.liked
+        : null,
     bookmarkState:
       typeof value.bookmarked === "boolean" ? value.bookmarked : null,
     replyContext:

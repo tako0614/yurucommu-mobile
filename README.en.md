@@ -120,3 +120,19 @@ Community replies retain the actual parent community. A followers-scoped parent 
 The existing Core creation ACK omits the parent. Within the same 15-second mutation budget the App reads the returned ID through the selected server and verifies parent, author, visibility and community. Unknown results retain the draft and never auto-resend. Accepted posting and failed refresh remain separate. Back pauses requests while keeping the same-target draft and files; changing targets cannot silently discard them. Account changes and disposal retire drafts, requests and temporary URLs. Story or unknown reach remains read-only. These source/local checks do not establish remote delivery, installed-server adoption or native-device readiness.
 
 Qualified mentions of local recipients also require the paired Core resolver repair. This App source change neither republishes an older Core package nor updates installed servers. A confirmed stored reply does not prove receipt or external delivery.
+
+### Post likes and recovery
+
+Feed, saved-post, detail and reply cards support like/unlike through the selected
+server. A missing raw viewer `liked` flag remains unknown: the app offers an
+explicit state read before enabling changes. Counts come from the persisted post
+GET, with no local increment/decrement. The mutation ACK and persisted read share
+the existing 15-second budget.
+
+An uncertain ACK, refusal or mismatched readback disables mutation until an
+explicit read succeeds. Recovery never automatically resends a mutation. Cards for the same post share
+pending, uncertain and confirmed state, preventing cross-card duplicate writes.
+A read started before the change cannot downgrade its confirmed viewer flag/count. When the last visible card for a post leaves the screen, or the account changes,
+the app retires its old request and fences late results. Cancellation does not promise server-side rollback.
+Portable/local HTTP/intercepted-browser checks do not qualify real device login,
+installed servers, push delivery or distribution.

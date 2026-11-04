@@ -9,7 +9,6 @@ import {
   untrack,
 } from "solid-js";
 import {
-  appendUniqueMobileItemsById,
   appendUniqueMobileItemsByKey,
   formatMobilePreviewDate,
   type MobileSession,
@@ -27,6 +26,8 @@ import { createFeedController, type FeedState } from "./feed-controller.ts";
 import { PostComposer } from "./post-composer.tsx";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 import { PostMedia } from "./post-media.tsx";
+import { PostLike } from "./post-like.tsx";
+import type { PostLikeStore } from "./post-like-controller.ts";
 import {
   displayHostRoutePath,
   hostRouteNoticeFor,
@@ -65,6 +66,8 @@ export function Feed(props: {
   session: MobileSession;
   isActive?: () => boolean;
   refreshHome: () => Promise<void>;
+  likeActionsActive?: () => boolean;
+  likes: PostLikeStore;
   onOpenPost: (apId: string, trigger: HTMLButtonElement) => void;
 }) {
   const [state, setState] = createSignal<FeedState>({
@@ -142,7 +145,15 @@ export function Feed(props: {
                         >
                           投稿を開く
                         </button>
-                        <span>♡ {post.like_count}</span>
+                        <PostLike
+                          session={props.session}
+                          post={post}
+                          isActive={() =>
+                            props.isActive?.() !== false &&
+                            props.likeActionsActive?.() !== false
+                          }
+                          store={props.likes}
+                        />
                         <span>返信 {post.reply_count}</span>
                         <Show when={post.published}>
                           {(published) => (
@@ -168,6 +179,8 @@ export function BookmarksPreview(props: {
   session: MobileSession;
   revision?: number;
   isActive?: () => boolean;
+  likeActionsActive?: () => boolean;
+  likes: PostLikeStore;
   onOpenPost: (apId: string, trigger: HTMLButtonElement) => void;
 }) {
   const [posts, setPosts] = createSignal<
@@ -209,8 +222,8 @@ export function BookmarksPreview(props: {
         read.signal,
       );
       if (!live(current, key)) return;
-      const withIds = next.map((post) => ({ ...post, id: post.ap_id }));
-      setPosts(appendUniqueMobileItemsById([], withIds));
+      // Preserve each decoder-owned read stamp while deduplicating the AP ID.
+      setPosts(appendUniqueMobileItemsByKey([], next, (post) => post.ap_id));
     } catch (error) {
       if (live(current, key)) {
         setError(
@@ -259,6 +272,15 @@ export function BookmarksPreview(props: {
                         {post.author.name ?? post.author.preferred_username}
                       </strong>
                       <p>{post.content}</p>
+                      <PostLike
+                        session={props.session}
+                        post={post}
+                        isActive={() =>
+                          props.isActive?.() !== false &&
+                          props.likeActionsActive?.() !== false
+                        }
+                        store={props.likes}
+                      />
                       <PostMedia
                         attachments={post.attachments}
                         session={props.session}

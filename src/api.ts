@@ -19,7 +19,7 @@ import {
   validateFile,
   FileValidationError,
 } from "@takosjp/yurucommu-api";
-import { snapshotFeedSession } from "./feed-session.ts";
+import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 
 export type MobileActor = Pick<
   Actor,
@@ -35,7 +35,11 @@ export interface MobileReplyTarget {
 export type MobilePost = Pick<
   Post,
   "ap_id" | "content" | "like_count" | "reply_count" | "author"
-> & { published: string | null; attachments?: Post["attachments"] };
+> & {
+  published: string | null;
+  attachments?: Post["attachments"];
+  readonly likeState?: boolean | null;
+};
 
 export interface YurucommuMobileHome {
   actor: MobileActor;
@@ -47,10 +51,11 @@ export async function loadHome(
   session: MobileSession,
   signal?: AbortSignal,
 ): Promise<YurucommuMobileHome> {
-  return withMobileReadScope(session, signal, async (request) => {
+  const selected = snapshotFeedSession(session);
+  return withMobileReadScope(selected, signal, async (request) => {
     const [actor, timeline, unread] = await Promise.all([
       fetchMobileCurrentActor(request),
-      fetchMobileTimeline(request),
+      fetchMobileTimeline(request, selected),
       fetchMobileUnreadCount(request),
     ]);
     return { actor, posts: timeline, unread };
@@ -500,6 +505,129 @@ async function mutationError(
   return new Error(message);
 }
 
+// Client read provenance is kept out of wire objects/JSON. A read that began
+// before a mutation cannot later downgrade its confirmed viewer state.
+const postLikeReads = new WeakMap<
+  object,
+  { scope: string; startedAt: number }
+>();
+const likeScope = (session: MobileSession) =>
+  JSON.stringify([feedSessionIdentity(session), session.apiBaseUrl]);
+export function recordMobilePostLikeRead<T extends object>(
+  post: T,
+  session: MobileSession,
+  startedAt: number,
+): T {
+  postLikeReads.set(post, { scope: likeScope(session), startedAt });
+  return post;
+}
+export function mobilePostLikeReadStartedAt(
+  post: object,
+  session: MobileSession,
+): number | null {
+  const stamp = postLikeReads.get(post);
+  return stamp?.scope === likeScope(session) ? stamp.startedAt : null;
+}
+
+export interface MobilePostLikeReceipt {
+  readonly ap_id: string;
+  readonly likeState: boolean;
+  readonly like_count: number;
+}
+
+function decodePostLike(value: unknown, apId: string): MobilePostLikeReceipt {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.post) ||
+    value.post.ap_id !== apId ||
+    typeof value.post.liked !== "boolean" ||
+    typeof value.post.like_count !== "number" ||
+    !Number.isSafeInteger(value.post.like_count) ||
+    Number(value.post.like_count) < 0
+  )
+    throw new Error("いいねの状態を確認できませんでした。");
+  return {
+    ap_id: apId,
+    likeState: value.post.liked,
+    like_count: value.post.like_count,
+  };
+}
+
+export async function loadMobilePostLike(
+  session: MobileSession,
+  apId: string,
+  signal?: AbortSignal,
+): Promise<MobilePostLikeReceipt> {
+  if (!nonEmptyString(apId)) throw new Error("投稿の識別子が不正です。");
+  return withMobileReadScope(session, signal, async (request) => {
+    const response = await request(`/api/posts/${encodeURIComponent(apId)}`);
+    if (!response.ok) throw await mutationError(response, "いいねの確認");
+    return decodePostLike(
+      await readMutationAcknowledgement(response, 128 * 1024, "いいねの確認"),
+      apId,
+    );
+  });
+}
+
+export async function setMobilePostLike(
+  session: MobileSession,
+  apId: string,
+  liked: boolean,
+  signal?: AbortSignal,
+): Promise<MobilePostLikeReceipt> {
+  if (!nonEmptyString(apId)) throw new Error("投稿の識別子が不正です。");
+  const selected = snapshotFeedSession(session),
+    owned = new AbortController();
+  const cancel = () => owned.abort(signal?.reason);
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
+  const deadline = setTimeout(
+    () =>
+      owned.abort(new Error("いいねの結果を時間内に確認できませんでした。")),
+    15_000,
+  );
+  const request = (path: string, method = "GET") => {
+    if (owned.signal.aborted) return Promise.reject(owned.signal.reason);
+    return withYurucommuMobileTransport(selected, () =>
+      apiFetch(path, {
+        method,
+        signal: owned.signal,
+        timeoutMs: 0,
+        credentials: "omit",
+        redirect: "error",
+        cache: "no-store",
+      }),
+    );
+  };
+  try {
+    const path = `/api/posts/${encodeURIComponent(apId)}`;
+    const response = await request(`${path}/like`, liked ? "POST" : "DELETE");
+    if (!response.ok) throw await mutationError(response, "いいねの変更");
+    const value = await readMutationAcknowledgement(
+      response,
+      16 * 1024,
+      "いいねの変更",
+    );
+    if (!isRecord(value) || value.success !== true || value.liked !== liked)
+      throw new Error("いいねの変更結果を確認できませんでした。");
+    // ACK has no count. Read the persisted viewer state instead of adjusting a
+    // count locally or trusting SDK defaults for missing fields.
+    const readback = await request(path);
+    if (!readback.ok) throw await mutationError(readback, "いいねの確認");
+    const saved = decodePostLike(
+      await readMutationAcknowledgement(readback, 128 * 1024, "いいねの確認"),
+      apId,
+    );
+    if (saved.likeState !== liked)
+      throw new Error("いいねの保存状態が変更結果と一致しません。");
+    if (owned.signal.aborted) throw owned.signal.reason;
+    return saved;
+  } finally {
+    clearTimeout(deadline);
+    signal?.removeEventListener("abort", cancel);
+  }
+}
+
 export async function setMobilePostBookmark(
   session: MobileSession,
   apId: string,
@@ -556,14 +684,18 @@ export async function loadYurucommuMobileBookmarksPage(
   session: MobileSession,
   signal?: AbortSignal,
 ): Promise<MobilePost[]> {
-  return withMobileReadScope(session, signal, async (request) => {
+  const selected = snapshotFeedSession(session);
+  return withMobileReadScope(selected, signal, async (request) => {
+    const startedAt = performance.now();
     const response = await request("/api/bookmarks?limit=8");
     await assertOk(response, "Failed to load bookmarks");
     const value: unknown = await response.json();
     if (!isRecord(value) || !Array.isArray(value.posts)) {
       throw new Error("Yurucommu bookmarks response is invalid.");
     }
-    return value.posts.map(decodeMobilePost);
+    return value.posts.map((post) =>
+      recordMobilePostLikeRead(decodeMobilePost(post), selected, startedAt),
+    );
   });
 }
 
@@ -625,16 +757,20 @@ async function fetchMobileUnreadCount(
 
 async function fetchMobileTimeline(
   request: MobileReadRequest,
+  selected: MobileSession,
 ): Promise<MobilePost[]> {
   // The published SDK's timeline helper substitutes [] for an absent posts
   // member. Validate the actual response before that fallback can hide it.
+  const startedAt = performance.now();
   const response = await request("/api/timeline?limit=20");
   await assertOk(response, "Failed to load timeline");
   const value: unknown = await response.json();
   if (!isRecord(value) || !Array.isArray(value.posts)) {
     throw new Error("Yurucommu timeline response is invalid.");
   }
-  return value.posts.map(decodeMobilePost);
+  return value.posts.map((post) =>
+    recordMobilePostLikeRead(decodeMobilePost(post), selected, startedAt),
+  );
 }
 
 async function fetchMobileCurrentActor(
@@ -688,6 +824,10 @@ function decodeMobilePost(value: unknown): MobilePost {
   // whose preferred username is null, without inventing a missing timestamp.
   return {
     ...value,
+    likeState:
+      typeof value.liked === "boolean" && Number.isSafeInteger(value.like_count)
+        ? value.liked
+        : null,
     author: normalizeActor(value.author as unknown as MobileActor),
   } as unknown as MobilePost;
 }
