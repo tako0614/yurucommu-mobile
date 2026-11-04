@@ -1,24 +1,36 @@
 import {
-  createEffect, createMemo, createRenderEffect, createSignal,
-  For, onCleanup, Show, untrack,
+  createEffect,
+  createMemo,
+  createRenderEffect,
+  createSignal,
+  For,
+  onCleanup,
+  Show,
+  untrack,
 } from "solid-js";
 import {
-  appendUniqueMobileItemsById, appendUniqueMobileItemsByKey,
-  confirmMobileAction, formatMobilePreviewDate,
-  mobileTextRemaining, type MobileSession,
+  appendUniqueMobileItemsById,
+  appendUniqueMobileItemsByKey,
+  formatMobilePreviewDate,
+  type MobileSession,
 } from "@takosjp/mobile-kit";
 import {
-  MobileComposeField, MobileComposeFooter, MobileComposeForm,
-  MobileComposeSection, MobilePreviewCard, MobilePreviewList,
-  MobilePreviewSection, MobileSegmentedControl,
+  MobilePreviewCard,
+  MobilePreviewList,
+  MobilePreviewSection,
 } from "@takosjp/mobile-kit/solid";
-import { loadYurucommuMobileBookmarksPage, type YurucommuMobileHome } from "./api.ts";
-import { createFeedController, MAX_MOBILE_ATTACHMENTS, type FeedState } from "./feed-controller.ts";
-import { allowedMimeTypes, maxImageFileSize, maxVideoFileSize } from "@takosjp/yurucommu-api";
+import {
+  loadYurucommuMobileBookmarksPage,
+  type YurucommuMobileHome,
+} from "./api.ts";
+import { createFeedController, type FeedState } from "./feed-controller.ts";
+import { PostComposer } from "./post-composer.tsx";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 import { PostMedia } from "./post-media.tsx";
 import {
-  displayHostRoutePath, hostRouteNoticeFor, type HostRouteNotice,
+  displayHostRoutePath,
+  hostRouteNoticeFor,
+  type HostRouteNotice,
 } from "./host-route.ts";
 
 /** Shown when a link asked for a host screen that this app does not have. */
@@ -32,9 +44,14 @@ export function HostRouteNoticeBanner(props: {
       {(notice) => (
         <div class="route-notice" role="status">
           <p>
-            リンク先の画面（{displayHostRoutePath(notice().path)}）はアプリにありません。フィードを表示しています。
+            リンク先の画面（{displayHostRoutePath(notice().path)}
+            ）はアプリにありません。フィードを表示しています。
           </p>
-          <button type="button" class="text-button" onClick={() => props.onDismiss()}>
+          <button
+            type="button"
+            class="text-button"
+            onClick={() => props.onDismiss()}
+          >
             閉じる
           </button>
         </div>
@@ -51,9 +68,15 @@ export function Feed(props: {
   onOpenPost: (apId: string, trigger: HTMLButtonElement) => void;
 }) {
   const [state, setState] = createSignal<FeedState>({
-    content: "", visibility: "public", sending: false,
-    error: "", status: "", refreshError: "",
-    attachments: [], attachmentError: "", canSubmit: false,
+    content: "",
+    visibility: "public",
+    sending: false,
+    error: "",
+    status: "",
+    refreshError: "",
+    attachments: [],
+    attachmentError: "",
+    canSubmit: false,
   });
   const controller = createFeedController({
     session: props.session,
@@ -63,11 +86,6 @@ export function Feed(props: {
   });
   createRenderEffect(() => controller.updateSession(props.session));
   onCleanup(() => controller.dispose());
-  const content = () => state().content;
-  const visibility = () => state().visibility;
-  const sending = () => state().sending;
-  const canPost = () => state().canSubmit;
-  const attachmentIds = createMemo(() => state().attachments.map(item => item.id));
   const posts = () =>
     appendUniqueMobileItemsByKey(
       [],
@@ -76,96 +94,7 @@ export function Feed(props: {
     );
   return (
     <div class="mobile-feed">
-      <MobileComposeSection title="投稿する">
-        <MobileComposeForm
-          onSubmit={(event) => {
-            event.preventDefault();
-            void controller.submit();
-          }}
-        >
-          <MobileComposeField label="いまどうしてる？">
-            <textarea
-              maxlength={500}
-              value={content()}
-              placeholder="近況をシェア"
-              onInput={(event) => controller.setDraft(event.currentTarget.value)}
-            />
-          </MobileComposeField>
-          <MobileComposeField label="画像・動画を添付">
-            <span class="composer-file-picker" classList={{"is-disabled": state().attachments.length >= MAX_MOBILE_ATTACHMENTS}}>
-              <span aria-hidden="true">画像・動画を選ぶ</span>
-              <input type="file" multiple aria-label="画像・動画を添付" accept={allowedMimeTypes.join(",")}
-              disabled={state().attachments.length >= MAX_MOBILE_ATTACHMENTS}
-              onChange={(event) => {
-                const files = Array.from(event.currentTarget.files ?? []);
-                event.currentTarget.value = "";
-                void controller.addFiles(files);
-              }} />
-            </span>
-          </MobileComposeField>
-          <p class="composer-attachment-help">本文と一緒に投稿します。添付 {state().attachments.length}/{MAX_MOBILE_ATTACHMENTS}件・画像{maxImageFileSize / 1024 / 1024}MB／動画{maxVideoFileSize / 1024 / 1024}MBまで</p>
-          <Show when={state().attachmentError}>{message => <p role="alert">{message()}</p>}</Show>
-          <Show when={attachmentIds().length}>
-            <ul class="composer-attachments" aria-label="添付ファイル">
-              <For each={attachmentIds()}>{id => (
-                <Show when={state().attachments.find(item => item.id === id)}>{item => (
-                  <li>
-                    <Show when={item().contentType.startsWith("video/")} fallback={<img src={item().previewUrl} alt={item().name} />}>
-                      <video src={item().previewUrl} controls playsinline preload="metadata" aria-label={item().name} />
-                    </Show>
-                    <p>{item().name}</p>
-                    <p role="status">{{queued: "アップロード待ち", uploading: "アップロード中", ready: "アップロード済み", error: "アップロード失敗"}[item().phase]}</p>
-                    <Show when={item().error}>{message => <p role="alert">{message()}</p>}</Show>
-                    <div class="composer-attachment-actions">
-                      <Show when={item().phase === "error"}><button type="button" class="secondary" onClick={() => void controller.retryAttachment(id)}>再アップロード</button></Show>
-                      <button type="button" class="text-button" aria-label={`${item().name}を外す`} onClick={() => controller.removeAttachment(id)}>外す</button>
-                    </div>
-                  </li>
-                )}</Show>
-              )}</For>
-            </ul>
-          </Show>
-          <MobileSegmentedControl
-            ariaLabel="公開範囲"
-            value={visibility()}
-            options={[
-              { value: "public", label: "公開" },
-              { value: "unlisted", label: "ひかえめ" },
-              { value: "followers", label: "フォロワー" },
-            ]}
-            onChange={(value) => controller.setVisibility(value)}
-          />
-          <MobileComposeFooter
-            detail={`あと ${mobileTextRemaining(content(), 500)} 文字`}
-          >
-            <button
-              class="text-button"
-              type="button"
-              disabled={!content() && !state().attachments.length}
-              onClick={() => {
-                if (
-                  confirmMobileAction({ message: "入力中の投稿を消しますか？" })
-                )
-                  controller.clearDraft();
-              }}
-            >
-              クリア
-            </button>
-            <button class="primary" type="submit" disabled={!canPost()}>
-              {sending() ? "送信中" : "投稿"}
-            </button>
-          </MobileComposeFooter>
-        </MobileComposeForm>
-        <Show when={state().error}>
-          {(error) => <p role="alert">{error()}</p>}
-        </Show>
-        <Show when={state().status}>
-          {(status) => <p role="status">{status()}</p>}
-        </Show>
-        <Show when={state().refreshError}>
-          {(error) => <p role="alert">{error()}</p>}
-        </Show>
-      </MobileComposeSection>
+      <PostComposer controller={controller} state={state()} />
       <MobilePreviewSection
         title="フィード"
         detail={props.home ? `${posts().length}件` : undefined}
@@ -195,14 +124,31 @@ export function Feed(props: {
                         </div>
                       </div>
                       <p>{post.content}</p>
-                      <PostMedia attachments={post.attachments} session={props.session} isActive={props.isActive} />
+                      <PostMedia
+                        attachments={post.attachments}
+                        session={props.session}
+                        isActive={props.isActive}
+                      />
                       <footer>
-                        <button type="button" class="text-button" data-post-id={post.ap_id} data-post-surface="feed" aria-label={`${post.author.name || post.author.preferred_username}の投稿を開く`} onClick={(event) => props.onOpenPost(post.ap_id, event.currentTarget)}>投稿を開く</button>
+                        <button
+                          type="button"
+                          class="text-button"
+                          data-post-id={post.ap_id}
+                          data-post-surface="feed"
+                          aria-label={`${post.author.name || post.author.preferred_username}の投稿を開く`}
+                          onClick={(event) =>
+                            props.onOpenPost(post.ap_id, event.currentTarget)
+                          }
+                        >
+                          投稿を開く
+                        </button>
                         <span>♡ {post.like_count}</span>
                         <span>返信 {post.reply_count}</span>
                         <Show when={post.published}>
                           {(published) => (
-                            <time>{formatMobilePreviewDate(published(), "ja-JP")}</time>
+                            <time>
+                              {formatMobilePreviewDate(published(), "ja-JP")}
+                            </time>
                           )}
                         </Show>
                       </footer>
@@ -233,23 +179,35 @@ export function BookmarksPreview(props: {
   let request = 0;
   let activeRead: AbortController | undefined;
   const sessionKey = createMemo(() => feedSessionIdentity(props.session));
-  const currentSession = () => untrack(() => snapshotFeedSession(props.session));
+  const currentSession = () =>
+    untrack(() => snapshotFeedSession(props.session));
   const live = (current: number, key: string) =>
-    active && props.isActive?.() !== false && current === request &&
+    active &&
+    props.isActive?.() !== false &&
+    current === request &&
     key === feedSessionIdentity(props.session);
   onCleanup(() => {
     active = false;
     request += 1;
-    activeRead?.abort(); activeRead = undefined;
+    activeRead?.abort();
+    activeRead = undefined;
   });
-  async function refresh(requestSession = currentSession(), key = feedSessionIdentity(requestSession)) {
+  async function refresh(
+    requestSession = currentSession(),
+    key = feedSessionIdentity(requestSession),
+  ) {
     const current = ++request;
-    activeRead?.abort(); const read = new AbortController(); activeRead = read;
+    activeRead?.abort();
+    const read = new AbortController();
+    activeRead = read;
     setLoading(true);
     setError(undefined);
     setPosts([]);
     try {
-      const next = await loadYurucommuMobileBookmarksPage(requestSession, read.signal);
+      const next = await loadYurucommuMobileBookmarksPage(
+        requestSession,
+        read.signal,
+      );
       if (!live(current, key)) return;
       const withIds = next.map((post) => ({ ...post, id: post.ap_id }));
       setPosts(appendUniqueMobileItemsById([], withIds));
@@ -301,8 +259,23 @@ export function BookmarksPreview(props: {
                         {post.author.name ?? post.author.preferred_username}
                       </strong>
                       <p>{post.content}</p>
-                      <PostMedia attachments={post.attachments} session={props.session} isActive={props.isActive} />
-                      <button type="button" class="text-button" data-post-id={post.ap_id} data-post-surface="bookmarks" aria-label={`${post.author.name || post.author.preferred_username}の投稿を開く`} onClick={(event) => props.onOpenPost(post.ap_id, event.currentTarget)}>投稿を開く</button>
+                      <PostMedia
+                        attachments={post.attachments}
+                        session={props.session}
+                        isActive={props.isActive}
+                      />
+                      <button
+                        type="button"
+                        class="text-button"
+                        data-post-id={post.ap_id}
+                        data-post-surface="bookmarks"
+                        aria-label={`${post.author.name || post.author.preferred_username}の投稿を開く`}
+                        onClick={(event) =>
+                          props.onOpenPost(post.ap_id, event.currentTarget)
+                        }
+                      >
+                        投稿を開く
+                      </button>
                     </MobilePreviewCard>
                   </li>
                 )}

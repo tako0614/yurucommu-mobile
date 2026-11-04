@@ -2,9 +2,11 @@ import { createEffect, For, on, Show } from "solid-js";
 import { formatMobilePreviewDate } from "@takosjp/mobile-kit";
 import type { MobileSession } from "@takosjp/mobile-kit";
 import { PostMedia } from "./post-media.tsx";
+import { PostComposer } from "./post-composer.tsx";
 import {
   MobilePreviewCard,
   MobilePreviewList,
+  MobilePreviewSection,
 } from "@takosjp/mobile-kit/solid";
 import type {
   NotificationState,
@@ -49,9 +51,24 @@ export function NotificationScreen(props: {
   let openButton: HTMLButtonElement | undefined;
   createEffect(
     on(
-      () => props.state.page,
-      (page, previous) => {
-        if (page === previous) return;
+      () => props.state.post?.ap_id,
+      (id, previous) => {
+        if (
+          id &&
+          id !== previous &&
+          props.state.page === "post" &&
+          !props.state.repliesLoaded
+        )
+          void props.controller.reloadReplies();
+      },
+    ),
+  );
+  createEffect(
+    on(
+      () => [props.state.page, props.state.post?.ap_id] as const,
+      ([page, id], previous) => {
+        if (previous && page === previous[0] && id === previous[1]) return;
+        if (page === "post" && !id && previous?.[0] === "post") return;
         queueMicrotask(() => {
           if (props.state.page !== page || props.isActive?.() === false) return;
           const target =
@@ -182,50 +199,172 @@ export function NotificationScreen(props: {
         </Show>
         <Show when={props.state.page === "post" && props.state.post}>
           {(post) => (
-            <MobilePreviewCard class="native-notification-post">
-              <p>
-                <strong>
-                  {post().author.name || post().author.preferred_username}
-                </strong>
-              </p>
-              <p>{postText(post().content)}</p>
-              <PostMedia
-                attachments={post().attachments}
-                session={props.session}
-              />
+            <>
+              <MobilePreviewCard class="native-notification-post">
+                <p>
+                  <strong>
+                    {post().author.name || post().author.preferred_username}
+                  </strong>
+                </p>
+                <p>{postText(post().content)}</p>
+                <PostMedia
+                  attachments={post().attachments}
+                  session={props.session}
+                />
+                <Show
+                  when={post().bookmarkState !== null}
+                  fallback={
+                    <p>このサーバーの応答では保存状態を確認できません。</p>
+                  }
+                >
+                  <button
+                    type="button"
+                    class="text-button"
+                    aria-pressed={post().bookmarkState === true}
+                    disabled={
+                      props.state.bookmarkBusy ||
+                      props.state.bookmarkNeedsReload
+                    }
+                    onClick={() => void props.controller.toggleBookmark()}
+                  >
+                    {props.state.bookmarkBusy
+                      ? "保存中…"
+                      : post().bookmarkState
+                        ? "保存を解除"
+                        : "投稿を保存"}
+                  </button>
+                </Show>
+                <Show when={props.state.bookmarkError}>
+                  <p role="alert">{props.state.bookmarkError}</p>
+                </Show>
+                <Show when={post().published} fallback={<span>日時不明</span>}>
+                  {(published) => (
+                    <time dateTime={published()}>
+                      {formatMobilePreviewDate(published(), "ja-JP")}
+                    </time>
+                  )}
+                </Show>
+              </MobilePreviewCard>
               <Show
-                when={post().bookmarkState !== null}
-                fallback={
-                  <p>このサーバーの応答では保存状態を確認できません。</p>
+                when={post().replyContext}
+                fallback={<p>この投稿の返信先・公開範囲を確認できません。</p>}
+              >
+                <Show when={props.state.replyDraft}>
+                  {(draft) => (
+                    <PostComposer
+                      controller={props.controller.getReplyComposer()!}
+                      state={draft()}
+                      reply
+                      community={!!post().replyContext?.communityApId}
+                      chooseReplyAudience={
+                        post().replyContext?.visibility === "followers"
+                      }
+                      authorMention={
+                        /^[A-Za-z0-9_]+(?:@[A-Za-z0-9.-]+)?$/.test(
+                          post().author.username ?? "",
+                        )
+                          ? `@${post().author.username}`
+                          : undefined
+                      }
+                    />
+                  )}
+                </Show>
+              </Show>
+              <MobilePreviewSection
+                title="返信"
+                actions={
+                  <button
+                    type="button"
+                    class="text-button"
+                    disabled={
+                      props.state.repliesLoading ||
+                      props.state.repliesLoadingMore
+                    }
+                    onClick={() => void props.controller.reloadReplies()}
+                  >
+                    返信を再読み込み
+                  </button>
                 }
               >
-                <button
-                  type="button"
-                  class="text-button"
-                  aria-pressed={post().bookmarkState === true}
-                  disabled={
-                    props.state.bookmarkBusy || props.state.bookmarkNeedsReload
+                <Show when={props.state.repliesLoading}>
+                  <p role="status">返信を読み込み中…</p>
+                </Show>
+                <Show when={props.state.repliesError}>
+                  <div role="alert">
+                    <p>{props.state.repliesError}</p>
+                    <button
+                      type="button"
+                      class="text-button"
+                      disabled={
+                        props.state.repliesLoading ||
+                        props.state.repliesLoadingMore
+                      }
+                      onClick={() => void props.controller.retryReplies()}
+                    >
+                      返信を再試行
+                    </button>
+                  </div>
+                </Show>
+                <Show
+                  when={
+                    props.state.repliesLoaded &&
+                    !props.state.replies.length &&
+                    !props.state.repliesLoading &&
+                    !props.state.repliesError
                   }
-                  onClick={() => void props.controller.toggleBookmark()}
                 >
-                  {props.state.bookmarkBusy
-                    ? "保存中…"
-                    : post().bookmarkState
-                      ? "保存を解除"
-                      : "投稿を保存"}
-                </button>
-              </Show>
-              <Show when={props.state.bookmarkError}>
-                <p role="alert">{props.state.bookmarkError}</p>
-              </Show>
-              <Show when={post().published} fallback={<span>日時不明</span>}>
-                {(published) => (
-                  <time dateTime={published()}>
-                    {formatMobilePreviewDate(published(), "ja-JP")}
-                  </time>
-                )}
-              </Show>
-            </MobilePreviewCard>
+                  <p class="empty">
+                    {props.state.repliesHasMore
+                      ? "このページには表示できる返信がありません。続きの返信を確認できます。"
+                      : "返信はまだありません。"}
+                  </p>
+                </Show>
+                <MobilePreviewList>
+                  <For each={props.state.replies}>
+                    {(reply) => (
+                      <li>
+                        <MobilePreviewCard class="native-notification-post">
+                          <strong>
+                            {reply.author.name ||
+                              reply.author.preferred_username}
+                          </strong>
+                          <p>{postText(reply.content)}</p>
+                          <PostMedia
+                            attachments={reply.attachments}
+                            session={props.session}
+                          />
+                          <button
+                            type="button"
+                            class="text-button"
+                            aria-label={`${reply.author.name || reply.author.preferred_username}の返信を開く`}
+                            onClick={() =>
+                              void props.controller.openReply(reply.ap_id)
+                            }
+                          >
+                            この返信を開く
+                          </button>
+                        </MobilePreviewCard>
+                      </li>
+                    )}
+                  </For>
+                </MobilePreviewList>
+                <Show when={props.state.repliesHasMore}>
+                  <button
+                    type="button"
+                    class="text-button"
+                    disabled={
+                      props.state.repliesLoading ||
+                      props.state.repliesLoadingMore
+                    }
+                    onClick={() => void props.controller.loadMoreReplies()}
+                  >
+                    {props.state.repliesLoadingMore
+                      ? "読み込み中…"
+                      : "返信をさらに表示"}
+                  </button>
+                </Show>
+              </MobilePreviewSection>
+            </>
           )}
         </Show>
       </Show>

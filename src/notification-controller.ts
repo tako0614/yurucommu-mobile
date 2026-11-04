@@ -5,9 +5,11 @@ import {
 import type { Notification } from "@takosjp/yurucommu-api";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 import { setMobilePostBookmark } from "./api.ts";
+import { createFeedController, type FeedState } from "./feed-controller.ts";
 import {
   loadMobileNotificationPost,
   loadMobileNotifications,
+  loadMobilePostReplies,
   type MobileNotificationPost,
 } from "./notification-api.ts";
 
@@ -25,7 +27,24 @@ export interface NotificationState {
   readonly bookmarkBusy: boolean;
   readonly bookmarkError: string;
   readonly bookmarkNeedsReload: boolean;
+  readonly replies: readonly MobileNotificationPost[];
+  readonly repliesLoaded: boolean;
+  readonly repliesLoading: boolean;
+  readonly repliesLoadingMore: boolean;
+  readonly repliesError: string;
+  readonly repliesHasMore: boolean;
+  readonly repliesCursor: string | null;
+  readonly replyDraft?: FeedState;
 }
+const emptyReplies = () => ({
+  replies: [] as readonly MobileNotificationPost[],
+  repliesLoaded: false,
+  repliesLoading: false,
+  repliesLoadingMore: false,
+  repliesError: "",
+  repliesHasMore: false,
+  repliesCursor: null as string | null,
+});
 const initial = (): NotificationState => ({
   page: "home",
   loading: false,
@@ -38,6 +57,7 @@ const initial = (): NotificationState => ({
   bookmarkBusy: false,
   bookmarkError: "",
   bookmarkNeedsReload: false,
+  ...emptyReplies(),
 });
 
 // Owns one mounted app view, independently of the shared shell's credentials.
@@ -47,6 +67,8 @@ export function createNotificationController(options: {
   onChange?: (state: NotificationState) => void;
   isActive?: () => boolean;
   onBookmarksChanged?: () => void;
+  onPostReplied?: () => Promise<void>;
+  confirmDiscardReply?: () => boolean | Promise<boolean>;
 }) {
   let session = snapshotFeedSession(options.session);
   let sessionKey = feedSessionIdentity(session);
@@ -59,12 +81,31 @@ export function createNotificationController(options: {
   let failedContinuation = false;
   let activeRead: AbortController | undefined;
   let activeBookmark: AbortController | undefined;
+  let activeReplies: AbortController | undefined;
+  let failedRepliesContinuation = false;
+  let replyId: string | undefined;
+  let replyComposer: ReturnType<typeof createFeedController> | undefined;
+  let postHistory: {
+    id: string;
+    replies: ReturnType<typeof emptyReplies>;
+    cursors: string[];
+  }[] = [];
+  let replyCursors = new Set<string>();
+  function cancelReplies() {
+    activeReplies?.abort();
+    activeReplies = undefined;
+  }
+  function pauseReply() {
+    replyComposer?.pause();
+  }
   function cancelBookmark() {
     activeBookmark?.abort();
     activeBookmark = undefined;
   }
   function startRead() {
     cancelBookmark();
+    cancelReplies();
+    pauseReply();
     activeRead?.abort();
     const read = new AbortController();
     activeRead = read;
@@ -72,6 +113,8 @@ export function createNotificationController(options: {
   }
   function cancelRead() {
     cancelBookmark();
+    cancelReplies();
+    pauseReply();
     activeRead?.abort();
     activeRead = undefined;
   }
@@ -94,6 +137,10 @@ export function createNotificationController(options: {
     sessionKey = key;
     authority++;
     request++;
+    replyComposer?.dispose();
+    replyComposer = undefined;
+    replyId = undefined;
+    postHistory = [];
     cancelRead();
     postId = undefined;
     failedContinuation = false;
@@ -106,6 +153,7 @@ export function createNotificationController(options: {
     const owner = authority,
       generation = ++request;
     const read = startRead();
+    postHistory = [];
     failedContinuation = false;
     postId = undefined;
     publish({ ...initial(), page: "notifications", loading: true });
@@ -167,8 +215,156 @@ export function createNotificationController(options: {
     }
   }
 
-  async function openPost(id: string) {
+  function ensureReply(post: MobileNotificationPost, id: string) {
+    if (!post.replyContext) return;
+    const target = { apId: id, ...post.replyContext };
+    if (!replyComposer) {
+      replyId = id;
+      replyComposer = createFeedController({
+        session,
+        replyTo: target,
+        isActive: () =>
+          live() &&
+          state.page === "post" &&
+          postId === id &&
+          !!state.post?.replyContext,
+        onChange: (draft) => {
+          if (live() && state.page === "post" && postId === id)
+            publish({ ...state, replyDraft: draft });
+        },
+        refreshHome: async () => {
+          if (!live() || postId !== id || state.page !== "post") return;
+          const ok = await readReplies(false);
+          if (options.onPostReplied) await options.onPostReplied();
+          if (!ok) throw new Error("返信一覧を更新できませんでした。");
+        },
+      });
+    } else replyComposer.updateReplyContext(target);
+  }
+
+  async function readReplies(more: boolean): Promise<boolean> {
+    if (
+      !live() ||
+      state.page !== "post" ||
+      !state.post ||
+      !postId ||
+      (more && (state.repliesLoading || state.repliesLoadingMore)) ||
+      (more && (!state.repliesHasMore || !state.repliesCursor))
+    )
+      return false;
+    if (!more) {
+      cancelReplies();
+      replyCursors = new Set();
+    }
+    const owner = authority,
+      generation = request,
+      id = postId,
+      cursor = more ? state.repliesCursor! : undefined;
+    const read = new AbortController();
+    activeReplies = read;
+    failedRepliesContinuation = false;
+    publish({
+      ...state,
+      repliesLoading: !more,
+      repliesLoadingMore: more,
+      repliesError: "",
+    });
+    try {
+      const page = await loadMobilePostReplies(
+        session,
+        id,
+        cursor,
+        read.signal,
+      );
+      if (!current(owner, generation) || activeReplies !== read) return false;
+      if (
+        page.hasMore &&
+        page.nextCursor &&
+        (page.nextCursor === cursor || replyCursors.has(page.nextCursor))
+      )
+        throw new Error(
+          "返信の続きの位置が更新されませんでした。再読み込みしてください。",
+        );
+      if (page.nextCursor) replyCursors.add(page.nextCursor);
+      const previous = more ? state.replies : [];
+      const seen = new Set(previous.map((post) => post.ap_id));
+      const replies = [...previous];
+      for (const post of page.replies)
+        if (!seen.has(post.ap_id)) {
+          seen.add(post.ap_id);
+          replies.push(post);
+        }
+      publish({
+        ...state,
+        replies,
+        repliesLoaded: true,
+        repliesLoading: false,
+        repliesLoadingMore: false,
+        repliesHasMore: page.hasMore,
+        repliesCursor: page.nextCursor,
+      });
+      return true;
+    } catch (error) {
+      if (current(owner, generation) && activeReplies === read) {
+        failedRepliesContinuation = more;
+        publish({
+          ...state,
+          repliesLoading: false,
+          repliesLoadingMore: false,
+          repliesError: message(error),
+        });
+      }
+      return false;
+    } finally {
+      if (activeReplies === read) activeReplies = undefined;
+    }
+  }
+
+  async function navigatePost(
+    id: string,
+    mode: "external" | "reply" | "back" | "reload",
+  ) {
     if (!live()) return;
+    const beforeOwner = authority,
+      beforeRequest = request;
+    if (replyComposer && replyId !== id) {
+      const draft = replyComposer.getState();
+      if (draft.content.length || draft.attachments.length || draft.sending) {
+        let discard = false;
+        try {
+          discard = (await options.confirmDiscardReply?.()) ?? false;
+        } catch {
+          return;
+        }
+        if (!current(beforeOwner, beforeRequest) || !discard) return;
+      }
+      replyComposer.dispose();
+      replyComposer = undefined;
+      replyId = undefined;
+    }
+    const restoreEntry =
+      mode === "back" ? postHistory[postHistory.length - 1] : undefined;
+    const restored = restoreEntry?.replies;
+    if (mode === "external") postHistory = [];
+    if (mode === "reply" && postId && postId !== id)
+      postHistory = [
+        ...postHistory,
+        {
+          id: postId,
+          cursors: [...replyCursors],
+          replies: {
+            replies: state.replies,
+            repliesLoaded: state.repliesLoaded,
+            repliesHasMore: state.repliesHasMore,
+            repliesCursor: state.repliesCursor,
+            repliesLoading: false,
+            repliesLoadingMore: false,
+            repliesError: state.repliesError,
+          },
+        },
+      ].slice(-32);
+    if (mode === "back") postHistory.pop();
+    replyCursors = new Set(restoreEntry?.cursors ?? []);
     const owner = authority,
       generation = ++request;
     const read = startRead();
@@ -185,11 +381,23 @@ export function createNotificationController(options: {
       bookmarkBusy: false,
       bookmarkError: "",
       bookmarkNeedsReload: false,
+      ...emptyReplies(),
+      replyDraft: undefined,
     });
     try {
       const post = await loadMobileNotificationPost(session, id, read.signal);
-      if (current(owner, generation))
-        publish({ ...state, post, loading: false });
+      if (current(owner, generation)) {
+        ensureReply(post, id);
+        publish({
+          ...state,
+          ...(restored ?? {}),
+          post,
+          loading: false,
+          replyDraft: post.replyContext ? replyComposer?.getState() : undefined,
+        });
+        // The view starts its independently retryable conversation read. Its
+        // read capability does not depend on having enough metadata to compose.
+      }
     } catch (error) {
       if (current(owner, generation))
         publish({ ...state, loading: false, error: message(error) });
@@ -198,10 +406,18 @@ export function createNotificationController(options: {
     }
   }
 
+  async function openPost(id: string) {
+    await navigatePost(id, "external");
+  }
+  async function openReply(id: string) {
+    await navigatePost(id, "reply");
+  }
+
   function showHome() {
     if (!live()) return;
     request++;
     cancelRead();
+    postHistory = [];
     postId = undefined;
     failedContinuation = false;
     publish({
@@ -214,11 +430,15 @@ export function createNotificationController(options: {
       bookmarkBusy: false,
       bookmarkError: "",
       bookmarkNeedsReload: false,
+      ...emptyReplies(),
+      replyDraft: undefined,
     });
   }
 
   function back(): Promise<void> | void {
     if (!live()) return;
+    if (state.page === "post" && postHistory.length)
+      return navigatePost(postHistory[postHistory.length - 1]!.id, "back");
     if (state.page !== "post" || postBack !== "notifications")
       return showHome();
     if (!state.listLoaded) return openNotifications();
@@ -235,6 +455,8 @@ export function createNotificationController(options: {
       bookmarkBusy: false,
       bookmarkError: "",
       bookmarkNeedsReload: false,
+      ...emptyReplies(),
+      replyDraft: undefined,
     });
   }
 
@@ -242,7 +464,7 @@ export function createNotificationController(options: {
     if (!live() || state.loading || state.loadingMore || state.bookmarkBusy)
       return;
     if (state.page === "notifications") return openNotifications();
-    if (state.page === "post" && postId) return openPost(postId);
+    if (state.page === "post" && postId) return navigatePost(postId, "reload");
   }
 
   function retry(): Promise<void> | void {
@@ -299,6 +521,10 @@ export function createNotificationController(options: {
   function dispose() {
     disposed = true;
     cancelRead();
+    replyComposer?.dispose();
+    replyComposer = undefined;
+    replyId = undefined;
+    postHistory = [];
     authority++;
     request++;
     failedContinuation = false;
@@ -310,6 +536,11 @@ export function createNotificationController(options: {
     openNotifications,
     loadMore,
     openPost,
+    openReply,
+    getReplyComposer: () => replyComposer,
+    loadMoreReplies: () => readReplies(true),
+    reloadReplies: () => readReplies(false),
+    retryReplies: () => readReplies(failedRepliesContinuation),
     showHome,
     back,
     retry,

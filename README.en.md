@@ -110,3 +110,13 @@ Universal links / App Links on a publisher domain are not set up.
 Set `VITE_YURUCOMMU_NOTIFICATION_PUSHER_GATEWAY_URL` at build time to the public
 notification pusher gateway. Provider credentials remain in that gateway and
 must never be bundled into the app.
+
+## Conversations and replies
+
+Post detail reads replies through the selected server, with validated parent bindings, cursor pagination, explicit retry and no false empty result. Back from a nested reply restores the original rows and cursor. Ordinary Notes reuse the feed composer, attachments and bounded request lifecycle. Unknown parent reach permits reading but does not infer a public reply.
+
+Community replies retain the actual parent community. A followers-scoped parent requires an explicit choice between the replier's followers and a direct reply: the original audience can differ. Direct recipients must be explicit mentions, resolved through the existing server actor API before POST. The author-add action visibly edits the draft; it never adds a hidden recipient.
+
+The existing Core creation ACK omits the parent. Within the same 15-second mutation budget the App reads the returned ID through the selected server and verifies parent, author, visibility and community. Unknown results retain the draft and never auto-resend. Accepted posting and failed refresh remain separate. Back pauses requests while keeping the same-target draft and files; changing targets cannot silently discard them. Account changes and disposal retire drafts, requests and temporary URLs. Story or unknown reach remains read-only. These source/local checks do not establish remote delivery, installed-server adoption or native-device readiness.
+
+Qualified mentions of local recipients also require the paired Core resolver repair. This App source change neither republishes an older Core package nor updates installed servers. A confirmed stored reply does not prove receipt or external delivery.
