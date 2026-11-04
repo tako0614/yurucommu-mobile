@@ -88,7 +88,11 @@ export function NotificationScreen(props: {
           <button
             type="button"
             class="text-button"
-            disabled={props.state.loading || props.state.loadingMore}
+            disabled={
+              props.state.loading ||
+              props.state.loadingMore ||
+              props.state.bookmarkBusy
+            }
             onClick={() => void props.controller.reload()}
           >
             再読み込み
@@ -189,6 +193,31 @@ export function NotificationScreen(props: {
                 attachments={post().attachments}
                 session={props.session}
               />
+              <Show
+                when={post().bookmarkState !== null}
+                fallback={
+                  <p>このサーバーの応答では保存状態を確認できません。</p>
+                }
+              >
+                <button
+                  type="button"
+                  class="text-button"
+                  aria-pressed={post().bookmarkState === true}
+                  disabled={
+                    props.state.bookmarkBusy || props.state.bookmarkNeedsReload
+                  }
+                  onClick={() => void props.controller.toggleBookmark()}
+                >
+                  {props.state.bookmarkBusy
+                    ? "保存中…"
+                    : post().bookmarkState
+                      ? "保存を解除"
+                      : "投稿を保存"}
+                </button>
+              </Show>
+              <Show when={props.state.bookmarkError}>
+                <p role="alert">{props.state.bookmarkError}</p>
+              </Show>
               <Show when={post().published} fallback={<span>日時不明</span>}>
                 {(published) => (
                   <time dateTime={published()}>

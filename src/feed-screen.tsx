@@ -220,6 +220,7 @@ export function Feed(props: {
 
 export function BookmarksPreview(props: {
   session: MobileSession;
+  revision?: number;
   isActive?: () => boolean;
   onOpenPost: (apId: string, trigger: HTMLButtonElement) => void;
 }) {
@@ -267,6 +268,7 @@ export function BookmarksPreview(props: {
   }
   createEffect(() => {
     const key = sessionKey();
+    props.revision;
     void refresh(currentSession(), key);
   });
   return (
