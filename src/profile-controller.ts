@@ -6,6 +6,7 @@ import {
   type MobileProfile,
 } from "./profile-api.ts";
 import { createNotificationController } from "./notification-controller.ts";
+import { createProfileFollowController } from "./profile-follow-controller.ts";
 import type { MobileNotificationPost } from "./notification-api.ts";
 export interface MobileProfileState {
   readonly visible: boolean;
@@ -45,11 +46,13 @@ export function createProfileController(options: {
   onPostReplied?: () => Promise<void>;
   onBookmarksChanged?: () => void;
   onDeclined?: () => void;
+  onRelationshipChanged?: () => Promise<void>;
 }) {
   let session = snapshotFeedSession(options.session),
     key = keyOf(session),
     state = initial(),
     disposed = false,
+    retiringFollow = false,
     generation = 0,
     pageRequest = 0;
   let actorRead: AbortController | undefined,
@@ -64,6 +67,7 @@ export function createProfileController(options: {
   };
   const publish = (next: MobileProfileState) => {
     state = next;
+    retiringFollow = false;
     changed();
   };
   const makePosts = () =>
@@ -76,8 +80,55 @@ export function createProfileController(options: {
       confirmDiscardReply: options.confirmDiscardReply,
     });
   let postController = makePosts();
+  const relationships = new Map<
+    string,
+    ReturnType<typeof createProfileFollowController>
+  >();
+  function prepareFollow(actor: MobileProfile) {
+    const id = actor.ap_id;
+    if (relationships.has(id)) return;
+    relationships.set(
+      id,
+      createProfileFollowController({
+        session,
+        actorId: id,
+        isActive: () =>
+          live() &&
+          state.visible &&
+          !state.loading &&
+          !state.error &&
+          state.actor?.ap_id === id &&
+          postController.getState().page === "home",
+        onChange: changed,
+        onReceipt: (receipt) => {
+          if (
+            live() &&
+            state.visible &&
+            !state.loading &&
+            !state.error &&
+            state.actor?.ap_id === id
+          )
+            publish({ ...state, actor: receipt.actor });
+        },
+        onConfirmed: options.onRelationshipChanged,
+      }),
+    );
+  }
+  function setFollowActive(active: boolean) {
+    for (const [id, value] of relationships)
+      value.setActive(active && !retiringFollow && state.actor?.ap_id === id);
+  }
+  function disposeRelationships() {
+    for (const value of relationships.values()) value.dispose();
+    relationships.clear();
+  }
+
   let acceptedIdentifier: string | null | undefined;
   function cancel() {
+    // A reactive onChange may run before close/open publishes its next state.
+    // It must not rearm the relationship being retired in this same turn.
+    retiringFollow = true;
+    setFollowActive(false);
     actorRead?.abort();
     actorRead = undefined;
     pageRead?.abort();
@@ -241,6 +292,7 @@ export function createProfileController(options: {
         postController.dispose();
         postController = makePosts();
       } else postController.showHome();
+      prepareFollow(actor);
       acceptedIdentifier = identifier;
       publish({
         ...state,
@@ -298,6 +350,7 @@ export function createProfileController(options: {
     generation++;
     cancel();
     postController.dispose();
+    disposeRelationships();
     state = initial();
     acceptedIdentifier = undefined;
     postController = makePosts();
@@ -309,11 +362,15 @@ export function createProfileController(options: {
     generation++;
     cancel();
     postController.dispose();
+    disposeRelationships();
     state = initial();
   }
   return {
     getState: () => state,
     getPostController: () => postController,
+    getFollowController: () =>
+      state.actor ? relationships.get(state.actor.ap_id) : undefined,
+    setFollowActive,
     open,
     close,
     updateSession,

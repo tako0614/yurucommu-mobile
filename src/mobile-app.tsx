@@ -42,7 +42,17 @@ import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 const metrics = [
   { label: "投稿", value: (home) => home?.posts.length },
   { label: "未読", value: (home) => home?.unread },
-  { label: "フォロー", value: () => undefined },
+  {
+    label: "フォロー",
+    value: (home) => {
+      const count = home?.actor.following_count;
+      return typeof count === "number" &&
+        Number.isSafeInteger(count) &&
+        count >= 0
+        ? count
+        : undefined;
+    },
+  },
 ] satisfies readonly MobileShellMetric<YurucommuMobileHome>[];
 
 export function createYurucommuMobileApp(
@@ -115,6 +125,7 @@ export function createYurucommuMobileApp(
           isActive: () => current.active,
           onChange: () => setProfileRevision((value) => value + 1),
           onDeclined: () => restoreProfileFocus(),
+          onRelationshipChanged: () => actions().refreshHome(),
           onBookmarksChanged: () => setBookmarkRevision((value) => value + 1),
           onPostReplied: () => actions().refreshHome(),
           confirmDiscardReply: () =>

@@ -55,7 +55,7 @@ function metric(value: unknown): number | null {
     throw Error("プロフィールの件数を確認できませんでした。");
   return value;
 }
-function profile(value: unknown): MobileProfile {
+export function decodeMobileProfile(value: unknown): MobileProfile {
   if (
     !record(value) ||
     typeof value.ap_id !== "string" ||
@@ -159,7 +159,7 @@ export async function loadMobileProfile(
       "プロフィール",
     );
     if (!record(value)) throw Error("プロフィールの応答が不正です。");
-    const actor = profile(value.actor);
+    const actor = decodeMobileProfile(value.actor);
     if (
       (input.apId !== null && actor.ap_id !== input.apId) ||
       (input.username !== null &&

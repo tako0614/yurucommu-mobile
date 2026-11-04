@@ -147,5 +147,14 @@ No bearer is sent to an actor's origin and no authenticated browser is assumed.
 Post lists support continuation, retry and returning from details. The original
 view's draft and the profile conversation draft remain independent. Switching to
 a different profile asks before discarding that conversation's draft, media or
-uncertain send result. Missing remote counts remain unknown. Follow/unfollow and
-profile editing remain separate unfinished features.
+uncertain send result. Missing remote counts remain unknown.
+
+Follow, request cancellation and unfollow first verify the selected viewer and
+canonical target. Pending requests stay distinct from accepted follows. Each
+change requires an ACK and persisted relationship/count readback; an unknown
+outcome requires an explicit state read, with no automatic resend. Closing or
+switching profiles retains an uncertain result, while changing accounts retires
+the old operation. Self-follow and writes without raw server relationship state
+are unavailable. Remote delivery depends on the connected server federation
+runtime; local App checks do not qualify delivery. Profile editing remains a
+separate unfinished feature.
