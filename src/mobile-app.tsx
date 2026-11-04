@@ -98,10 +98,12 @@ export function createYurucommuMobileApp(
         const [session, setSession] = createSignal(context.session);
         const [actions, setActions] = createSignal(context);
         const [notificationRevision, setNotificationRevision] = createSignal(0);
+        const [bookmarkRevision, setBookmarkRevision] = createSignal(0);
         const notifications = createNotificationController({
           session: context.session,
           isActive: () => current.active,
           onChange: () => setNotificationRevision((value) => value + 1),
+          onBookmarksChanged: () => setBookmarkRevision((value) => value + 1),
         });
         const notificationState = () => {
           notificationRevision();
@@ -224,6 +226,7 @@ export function createYurucommuMobileApp(
                 onOpenPost={openPost}
               />
               <BookmarksPreview
+                revision={bookmarkRevision()}
                 session={session()}
                 isActive={() => current.active}
                 onOpenPost={openPost}

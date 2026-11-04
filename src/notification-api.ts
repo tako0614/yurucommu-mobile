@@ -18,6 +18,9 @@ export interface MobileNotificationsPage {
 // Keep the normalized SDK fields, without inventing that date from created_at.
 export type MobileNotificationPost = Omit<Post, "published"> & {
   readonly published: string | null;
+  // Normalization supplies false for a missing flag; that is insufficient
+  // authority for a mutation. Preserve unknown state for the native action.
+  readonly bookmarkState: boolean | null;
 };
 
 export async function loadMobileNotifications(
@@ -78,6 +81,10 @@ export async function loadMobileNotificationPost(
     return {
       ...normalizePost(value.post as unknown as Post),
       published: value.post.published,
+      bookmarkState:
+        typeof value.post.bookmarked === "boolean"
+          ? value.post.bookmarked
+          : null,
     };
   });
 }

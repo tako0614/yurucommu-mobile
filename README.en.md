@@ -2,6 +2,10 @@
 
 Feed cards and saved-post previews open the existing in-app post detail. Even remote post IDs are read through the connected account's server, without an external browser handoff. Failed reads can be retried; Back preserves the compose draft and restores focus to the originating card, including its replacement after a feed refresh.
 
+Post detail can save or remove a bookmark using the server's known state. Repeated clicks are blocked during a change, and a confirmed acknowledgment updates the action and re-reads the saved-post preview without clearing the compose draft. An unknown result never triggers an automatic resend: reload the post to reconcile its current state before another change. Account or navigation changes prevent an old acknowledgment from updating another view.
+
+Older servers that omit bookmark state from post detail need the server-side fix before this action is available. The App does not infer “unsaved” from an absent flag. This App change does not publish a Core package or update an existing server.
+
 Home, saved posts, notifications and post detail use a 15-second read budget through response-body consumption. A stalled body becomes a retryable error, never an empty result. Back, disposal and credential changes cancel reads that no longer belong to the view. A failed member of the parallel home load cancels its unfinished peers and cannot publish partial home data. Refresh coalescing and current-revision validation remain in place.
 
 Post attachments are available in the feed, saved posts and notification post view. Images and videos load only after an explicit display action; failures can be retried and videos do not autoplay. Only the connected server's canonical media route receives the selected account's authorization. Public remote media remains anonymous. Private media uses temporary object URLs that are released when the account changes or its view is disposed. Invalid URLs and unsupported formats show an unavailable state. These are source/portable behaviors; device codecs and real-server use require separate verification.

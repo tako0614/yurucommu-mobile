@@ -4,6 +4,7 @@ import {
 } from "@takosjp/mobile-kit";
 import type { Notification } from "@takosjp/yurucommu-api";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
+import { setMobilePostBookmark } from "./api.ts";
 import {
   loadMobileNotificationPost,
   loadMobileNotifications,
@@ -21,6 +22,9 @@ export interface NotificationState {
   readonly hasMore: boolean;
   readonly nextCursor: string | null;
   readonly post?: MobileNotificationPost;
+  readonly bookmarkBusy: boolean;
+  readonly bookmarkError: string;
+  readonly bookmarkNeedsReload: boolean;
 }
 const initial = (): NotificationState => ({
   page: "home",
@@ -31,6 +35,9 @@ const initial = (): NotificationState => ({
   listLoaded: false,
   hasMore: false,
   nextCursor: null,
+  bookmarkBusy: false,
+  bookmarkError: "",
+  bookmarkNeedsReload: false,
 });
 
 // Owns one mounted app view, independently of the shared shell's credentials.
@@ -39,6 +46,7 @@ export function createNotificationController(options: {
   session: MobileSession;
   onChange?: (state: NotificationState) => void;
   isActive?: () => boolean;
+  onBookmarksChanged?: () => void;
 }) {
   let session = snapshotFeedSession(options.session);
   let sessionKey = feedSessionIdentity(session);
@@ -50,13 +58,20 @@ export function createNotificationController(options: {
   let postBack: NotificationPage = "home";
   let failedContinuation = false;
   let activeRead: AbortController | undefined;
+  let activeBookmark: AbortController | undefined;
+  function cancelBookmark() {
+    activeBookmark?.abort();
+    activeBookmark = undefined;
+  }
   function startRead() {
+    cancelBookmark();
     activeRead?.abort();
     const read = new AbortController();
     activeRead = read;
     return read;
   }
   function cancelRead() {
+    cancelBookmark();
     activeRead?.abort();
     activeRead = undefined;
   }
@@ -167,6 +182,9 @@ export function createNotificationController(options: {
       loading: true,
       loadingMore: false,
       error: "",
+      bookmarkBusy: false,
+      bookmarkError: "",
+      bookmarkNeedsReload: false,
     });
     try {
       const post = await loadMobileNotificationPost(session, id, read.signal);
@@ -193,6 +211,9 @@ export function createNotificationController(options: {
       loadingMore: false,
       error: "",
       post: undefined,
+      bookmarkBusy: false,
+      bookmarkError: "",
+      bookmarkNeedsReload: false,
     });
   }
 
@@ -211,19 +232,68 @@ export function createNotificationController(options: {
       loading: false,
       loadingMore: false,
       error: "",
+      bookmarkBusy: false,
+      bookmarkError: "",
+      bookmarkNeedsReload: false,
     });
   }
 
   function reload(): Promise<void> | void {
-    if (!live() || state.loading || state.loadingMore) return;
+    if (!live() || state.loading || state.loadingMore || state.bookmarkBusy)
+      return;
     if (state.page === "notifications") return openNotifications();
     if (state.page === "post" && postId) return openPost(postId);
   }
 
   function retry(): Promise<void> | void {
-    if (!live() || state.loading || state.loadingMore) return;
+    if (!live() || state.loading || state.loadingMore || state.bookmarkBusy)
+      return;
     if (state.page === "notifications" && failedContinuation) return loadMore();
     return reload();
+  }
+
+  async function toggleBookmark() {
+    if (
+      !live() ||
+      state.page !== "post" ||
+      !state.post ||
+      !postId ||
+      state.post.bookmarkState === null ||
+      state.bookmarkBusy ||
+      state.bookmarkNeedsReload ||
+      state.loading
+    )
+      return;
+    const owner = authority,
+      generation = request,
+      id = postId;
+    const target = !state.post.bookmarkState;
+    const write = new AbortController();
+    activeBookmark = write;
+    publish({ ...state, bookmarkBusy: true, bookmarkError: "" });
+    try {
+      await setMobilePostBookmark(session, id, target, write.signal);
+      if (current(owner, generation) && state.post) {
+        publish({
+          ...state,
+          post: { ...state.post, bookmarked: target, bookmarkState: target },
+          bookmarkBusy: false,
+        });
+      }
+    } catch (error) {
+      if (current(owner, generation))
+        publish({
+          ...state,
+          bookmarkBusy: false,
+          bookmarkNeedsReload: true,
+          bookmarkError: `保存結果を確認できませんでした。再読み込みで状態を確認してください。 ${message(error)}`,
+        });
+    } finally {
+      if (activeBookmark === write) activeBookmark = undefined;
+      // Re-read the actual saved preview, even if this account navigated back
+      // while the result was unknown. Never infer a list edit from a failed ACK.
+      if (live() && authority === owner) options.onBookmarksChanged?.();
+    }
   }
 
   function dispose() {
@@ -244,6 +314,7 @@ export function createNotificationController(options: {
     back,
     retry,
     reload,
+    toggleBookmark,
     dispose,
   };
 }

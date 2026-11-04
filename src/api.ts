@@ -359,6 +359,58 @@ async function mutationError(
   return new Error(message);
 }
 
+export async function setMobilePostBookmark(
+  session: MobileSession,
+  apId: string,
+  bookmarked: boolean,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!nonEmptyString(apId)) throw new Error("投稿の識別子が不正です。");
+  const selected = snapshotFeedSession(session),
+    owned = new AbortController();
+  const cancel = () => owned.abort(signal?.reason);
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
+  const deadline = setTimeout(
+    () => owned.abort(new Error("保存結果を時間内に確認できませんでした。")),
+    15_000,
+  );
+  try {
+    if (owned.signal.aborted) throw owned.signal.reason;
+    // Keep the public SDK's encoded selected-host route; its void helpers do
+    // not expose a caller signal or validate the mutation acknowledgment.
+    const response = await withYurucommuMobileTransport(selected, () =>
+      apiFetch(`/api/posts/${encodeURIComponent(apId)}/bookmark`, {
+        method: bookmarked ? "POST" : "DELETE",
+        signal: owned.signal,
+        timeoutMs: 0,
+        credentials: "omit",
+        redirect: "error",
+        cache: "no-store",
+      }),
+    );
+    if (!response.ok) throw await mutationError(response, "保存の変更");
+    const value = await readMutationAcknowledgement(
+      response,
+      16 * 1024,
+      "保存",
+    );
+    if (
+      !isRecord(value) ||
+      value.success !== true ||
+      value.bookmarked !== bookmarked
+    )
+      throw new Error("保存結果を確認できませんでした。");
+  } catch (cause) {
+    if (owned.signal.aborted) throw owned.signal.reason;
+    throw cause;
+  } finally {
+    clearTimeout(deadline);
+    signal?.removeEventListener("abort", cancel);
+    owned.abort();
+  }
+}
+
 export async function loadYurucommuMobileBookmarksPage(
   session: MobileSession,
   signal?: AbortSignal,
