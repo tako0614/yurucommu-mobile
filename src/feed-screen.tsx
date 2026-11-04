@@ -230,6 +230,7 @@ export function BookmarksPreview(props: {
   const [error, setError] = createSignal<string>();
   let active = true;
   let request = 0;
+  let activeRead: AbortController | undefined;
   const sessionKey = createMemo(() => feedSessionIdentity(props.session));
   const currentSession = () => untrack(() => snapshotFeedSession(props.session));
   const live = (current: number, key: string) =>
@@ -238,14 +239,16 @@ export function BookmarksPreview(props: {
   onCleanup(() => {
     active = false;
     request += 1;
+    activeRead?.abort(); activeRead = undefined;
   });
   async function refresh(requestSession = currentSession(), key = feedSessionIdentity(requestSession)) {
     const current = ++request;
+    activeRead?.abort(); const read = new AbortController(); activeRead = read;
     setLoading(true);
     setError(undefined);
     setPosts([]);
     try {
-      const next = await loadYurucommuMobileBookmarksPage(requestSession);
+      const next = await loadYurucommuMobileBookmarksPage(requestSession, read.signal);
       if (!live(current, key)) return;
       const withIds = next.map((post) => ({ ...post, id: post.ap_id }));
       setPosts(appendUniqueMobileItemsById([], withIds));
@@ -258,6 +261,7 @@ export function BookmarksPreview(props: {
         );
       }
     } finally {
+      if (activeRead === read) activeRead = undefined;
       if (live(current, key)) setLoading(false);
     }
   }

@@ -49,6 +49,17 @@ export function createNotificationController(options: {
   let postId: string | undefined;
   let postBack: NotificationPage = "home";
   let failedContinuation = false;
+  let activeRead: AbortController | undefined;
+  function startRead() {
+    activeRead?.abort();
+    const read = new AbortController();
+    activeRead = read;
+    return read;
+  }
+  function cancelRead() {
+    activeRead?.abort();
+    activeRead = undefined;
+  }
   const live = () => !disposed && options.isActive?.() !== false;
   const current = (owner: number, generation: number) =>
     live() && authority === owner && request === generation;
@@ -68,6 +79,7 @@ export function createNotificationController(options: {
     sessionKey = key;
     authority++;
     request++;
+    cancelRead();
     postId = undefined;
     failedContinuation = false;
     state = initial();
@@ -78,16 +90,23 @@ export function createNotificationController(options: {
     if (!live()) return;
     const owner = authority,
       generation = ++request;
+    const read = startRead();
     failedContinuation = false;
     postId = undefined;
     publish({ ...initial(), page: "notifications", loading: true });
     try {
-      const page = await loadMobileNotifications(session);
+      const page = await loadMobileNotifications(
+        session,
+        undefined,
+        read.signal,
+      );
       if (!current(owner, generation)) return;
       publish({ ...state, ...page, loading: false, listLoaded: true });
     } catch (error) {
       if (current(owner, generation))
         publish({ ...state, loading: false, error: message(error) });
+    } finally {
+      if (activeRead === read) activeRead = undefined;
     }
   }
 
@@ -104,10 +123,11 @@ export function createNotificationController(options: {
     const owner = authority,
       generation = request,
       cursor = state.nextCursor;
+    const read = startRead();
     failedContinuation = false;
     publish({ ...state, loadingMore: true, error: "" });
     try {
-      const page = await loadMobileNotifications(session, cursor);
+      const page = await loadMobileNotifications(session, cursor, read.signal);
       if (!current(owner, generation)) return;
       if (page.hasMore && page.nextCursor === cursor)
         throw new Error(
@@ -127,6 +147,8 @@ export function createNotificationController(options: {
         failedContinuation = true;
         publish({ ...state, loadingMore: false, error: message(error) });
       }
+    } finally {
+      if (activeRead === read) activeRead = undefined;
     }
   }
 
@@ -134,6 +156,7 @@ export function createNotificationController(options: {
     if (!live()) return;
     const owner = authority,
       generation = ++request;
+    const read = startRead();
     failedContinuation = false;
     if (state.page !== "post") postBack = state.page;
     postId = id;
@@ -146,18 +169,21 @@ export function createNotificationController(options: {
       error: "",
     });
     try {
-      const post = await loadMobileNotificationPost(session, id);
+      const post = await loadMobileNotificationPost(session, id, read.signal);
       if (current(owner, generation))
         publish({ ...state, post, loading: false });
     } catch (error) {
       if (current(owner, generation))
         publish({ ...state, loading: false, error: message(error) });
+    } finally {
+      if (activeRead === read) activeRead = undefined;
     }
   }
 
   function showHome() {
     if (!live()) return;
     request++;
+    cancelRead();
     postId = undefined;
     failedContinuation = false;
     publish({
@@ -176,6 +202,7 @@ export function createNotificationController(options: {
       return showHome();
     if (!state.listLoaded) return openNotifications();
     request++;
+    cancelRead();
     postId = undefined;
     publish({
       ...state,
@@ -201,6 +228,7 @@ export function createNotificationController(options: {
 
   function dispose() {
     disposed = true;
+    cancelRead();
     authority++;
     request++;
     failedContinuation = false;
