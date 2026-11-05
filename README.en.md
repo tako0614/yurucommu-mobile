@@ -180,3 +180,13 @@ and bounded body. Public remote images receive no bearer. Hiding the profile
 releases pending reads and object URLs. Stored profile, current readback, home
 refresh and federation delivery are separate outcomes; local App checks do not
 qualify real devices, genuine login, deployed hosts or remote delivery.
+
+Post details offer deletion only when the current viewer matches the author.
+After confirmation, the App rechecks the current identity and calls the existing
+owner-only DELETE API. It returns to the list only after a successful receipt
+and a same-server read confirms absence, then refreshes home, bookmarks and the
+profile. A reply draft, attachment or pending reply blocks deletion. Failure or
+an unknown outcome keeps the detail and requires an explicit reload without
+automatic resend. Retired view/account responses cannot update the new view.
+These are App source/portable behaviors, separate from device, installed-server
+and ActivityPub delivery qualification.

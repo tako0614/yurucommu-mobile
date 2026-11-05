@@ -4,6 +4,7 @@ import {
 } from "@takosjp/mobile-kit";
 import type { Notification } from "@takosjp/yurucommu-api";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
+import { deleteMobileOwnPost, MobilePostDeleteError } from "./post-delete-api.ts";
 import { setMobilePostBookmark } from "./api.ts";
 import { createFeedController, type FeedState } from "./feed-controller.ts";
 import {
@@ -24,6 +25,10 @@ export interface NotificationState {
   readonly hasMore: boolean;
   readonly nextCursor: string | null;
   readonly post?: MobileNotificationPost;
+  readonly postDeleteBusy: boolean;
+  readonly postDeleteError: string;
+  readonly postDeleteNeedsReload: boolean;
+  readonly postDeleteStatus: string;
   readonly bookmarkBusy: boolean;
   readonly bookmarkError: string;
   readonly bookmarkNeedsReload: boolean;
@@ -45,6 +50,12 @@ const emptyReplies = () => ({
   repliesHasMore: false,
   repliesCursor: null as string | null,
 });
+const emptyPostDelete = () => ({
+  postDeleteBusy: false,
+  postDeleteError: "",
+  postDeleteNeedsReload: false,
+  postDeleteStatus: "",
+});
 const initial = (): NotificationState => ({
   page: "home",
   loading: false,
@@ -57,6 +68,7 @@ const initial = (): NotificationState => ({
   bookmarkBusy: false,
   bookmarkError: "",
   bookmarkNeedsReload: false,
+  ...emptyPostDelete(),
   ...emptyReplies(),
 });
 
@@ -68,6 +80,10 @@ export function createNotificationController(options: {
   isActive?: () => boolean;
   onBookmarksChanged?: () => void;
   onPostReplied?: () => Promise<void>;
+  getActorId?: () => string | undefined;
+  confirmDeletePost?: () => boolean | Promise<boolean>;
+  onPostDeleteConfirmed?: (postId: string) => void;
+  onPostDeleted?: (postId: string) => Promise<void>;
   confirmDiscardReply?: () => boolean | Promise<boolean>;
 }) {
   let session = snapshotFeedSession(options.session);
@@ -81,6 +97,7 @@ export function createNotificationController(options: {
   let failedContinuation = false;
   let activeRead: AbortController | undefined;
   let activeBookmark: AbortController | undefined;
+  let activeDelete: AbortController | undefined;
   let activeReplies: AbortController | undefined;
   let failedRepliesContinuation = false;
   let replyId: string | undefined;
@@ -102,7 +119,12 @@ export function createNotificationController(options: {
     activeBookmark?.abort();
     activeBookmark = undefined;
   }
+  function cancelDelete() {
+    activeDelete?.abort();
+    activeDelete = undefined;
+  }
   function startRead() {
+    cancelDelete();
     cancelBookmark();
     cancelReplies();
     pauseReply();
@@ -112,6 +134,7 @@ export function createNotificationController(options: {
     return read;
   }
   function cancelRead() {
+    cancelDelete();
     cancelBookmark();
     cancelReplies();
     pauseReply();
@@ -227,7 +250,8 @@ export function createNotificationController(options: {
           live() &&
           state.page === "post" &&
           postId === id &&
-          !!state.post?.replyContext,
+          !!state.post?.replyContext &&
+          !state.postDeleteBusy && !state.postDeleteNeedsReload,
         onChange: (draft) => {
           if (live() && state.page === "post" && postId === id)
             publish({ ...state, replyDraft: draft });
@@ -381,6 +405,7 @@ export function createNotificationController(options: {
       bookmarkBusy: false,
       bookmarkError: "",
       bookmarkNeedsReload: false,
+      ...emptyPostDelete(),
       ...emptyReplies(),
       replyDraft: undefined,
     });
@@ -430,6 +455,7 @@ export function createNotificationController(options: {
       bookmarkBusy: false,
       bookmarkError: "",
       bookmarkNeedsReload: false,
+      ...emptyPostDelete(),
       ...emptyReplies(),
       replyDraft: undefined,
     });
@@ -455,23 +481,128 @@ export function createNotificationController(options: {
       bookmarkBusy: false,
       bookmarkError: "",
       bookmarkNeedsReload: false,
+      ...emptyPostDelete(),
       ...emptyReplies(),
       replyDraft: undefined,
     });
   }
 
   function reload(): Promise<void> | void {
-    if (!live() || state.loading || state.loadingMore || state.bookmarkBusy)
+    if (!live() || state.loading || state.loadingMore || state.bookmarkBusy || state.postDeleteBusy)
       return;
     if (state.page === "notifications") return openNotifications();
     if (state.page === "post" && postId) return navigatePost(postId, "reload");
   }
 
   function retry(): Promise<void> | void {
-    if (!live() || state.loading || state.loadingMore || state.bookmarkBusy)
+    if (!live() || state.loading || state.loadingMore || state.bookmarkBusy || state.postDeleteBusy)
       return;
     if (state.page === "notifications" && failedContinuation) return loadMore();
     return reload();
+  }
+
+  function ownsCurrentPost(): boolean {
+    const actor = options.getActorId?.();
+    return live() && state.page === "post" && !!actor &&
+      actor === state.post?.author.ap_id;
+  }
+  function hasReplyDraft(): boolean {
+    const draft = replyComposer?.getState();
+    return !!draft && (
+      !!draft.content.length || !!draft.attachments.length || draft.sending
+    );
+  }
+  function canDeletePost(): boolean {
+    return ownsCurrentPost() && !state.loading && !state.bookmarkBusy &&
+      !state.bookmarkNeedsReload && !state.postDeleteBusy &&
+      !state.postDeleteNeedsReload && !hasReplyDraft();
+  }
+  function invalidatePost(id: string) {
+    if (!live()) return;
+    postHistory = postHistory.filter((entry) => entry.id !== id).map((entry) => ({
+      ...entry, cursors: [], replies: emptyReplies(),
+    }));
+    if (state.page !== "post") return;
+    if (postId === id) {
+      request++;
+      cancelRead();
+      publish({
+        ...state, ...emptyReplies(), post: undefined, loading: false,
+        loadingMore: false, postDeleteBusy: false, postDeleteNeedsReload: true,
+        error: "この投稿は別の画面で削除されました。",
+        replyDraft: replyComposer?.getState(),
+      });
+    } else if (state.replies.some((post) => post.ap_id === id)) {
+      cancelReplies();
+      replyCursors = new Set();
+      publish({ ...state, ...emptyReplies() });
+    }
+  }
+  async function deleteOwnPost() {
+    if (!canDeletePost() || !state.post || !postId) return;
+    const owner = authority;
+    const id = postId;
+    const post = state.post;
+    let generation = request;
+    const abort = new AbortController();
+    activeDelete = abort;
+    publish({ ...state, postDeleteBusy: true, postDeleteError: "", postDeleteStatus: "" });
+    try {
+      const confirmed = (await options.confirmDeletePost?.()) ?? false;
+      if (!confirmed || !current(owner, generation) || abort.signal.aborted || hasReplyDraft())
+        return;
+      generation = ++request;
+      cancelBookmark();
+      cancelReplies();
+      pauseReply();
+      activeRead?.abort();
+      activeRead = undefined;
+      publish({ ...state, repliesLoading: false, repliesLoadingMore: false });
+      await deleteMobileOwnPost(session, id, post.author.ap_id, abort.signal);
+      if (!current(owner, generation) || abort.signal.aborted) return;
+      // Commit local cache invalidation before any navigational read can retire
+      // this view. This callback starts no asynchronous UI refresh.
+      options.onPostDeleteConfirmed?.(id);
+      activeDelete = undefined;
+      replyComposer?.dispose();
+      replyComposer = undefined;
+      replyId = undefined;
+      // Ancestor conversations may still contain this reply in a loaded page.
+      // Clear those pages before Back restores one, so the view reads them again.
+      postHistory = postHistory.filter((entry) => entry.id !== id).map((entry) => ({
+        ...entry,
+        cursors: [],
+        replies: emptyReplies(),
+      }));
+      const returning = back();
+      const refreshGeneration = request;
+      await returning;
+      if (!current(owner, refreshGeneration)) return;
+      let notice = "投稿を削除しました。";
+      try {
+        await options.onPostDeleted?.(id);
+      } catch {
+        notice = "投稿は削除済みです。一覧を更新できませんでした。再読み込みで確認してください。";
+      }
+      if (current(owner, refreshGeneration))
+        publish({ ...state, postDeleteStatus: notice });
+    } catch (cause) {
+      if (current(owner, generation) && !abort.signal.aborted) {
+        publish({
+          ...state,
+          postDeleteNeedsReload: true,
+          postDeleteError:
+            cause instanceof MobilePostDeleteError && cause.outcome === "not_applied"
+              ? `${message(cause)} 投稿を再読み込みして確認してください。`
+              : `削除の結果が不明です。再読み込みで確認するまで再送していません。 ${message(cause)}`,
+        });
+      }
+    } finally {
+      if (activeDelete === abort) {
+        activeDelete = undefined;
+        if (current(owner, generation)) publish({ ...state, postDeleteBusy: false });
+      }
+    }
   }
 
   async function toggleBookmark() {
@@ -483,6 +614,7 @@ export function createNotificationController(options: {
       state.post.bookmarkState === null ||
       state.bookmarkBusy ||
       state.bookmarkNeedsReload ||
+      state.postDeleteBusy || state.postDeleteNeedsReload ||
       state.loading
     )
       return;
@@ -524,6 +656,7 @@ export function createNotificationController(options: {
     const reading = state.loading || state.loadingMore;
     const readingReplies = state.repliesLoading || state.repliesLoadingMore;
     const writingBookmark = state.bookmarkBusy;
+    const deletingPost = state.postDeleteBusy;
     if (state.loadingMore) failedContinuation = true;
     else if (state.loading) failedContinuation = false;
     if (state.repliesLoadingMore) failedRepliesContinuation = true;
@@ -537,6 +670,9 @@ export function createNotificationController(options: {
       error: reading
         ? "読み込みを中断しました。再試行してください。"
         : state.error,
+      postDeleteBusy: false,
+      postDeleteNeedsReload: state.postDeleteNeedsReload || deletingPost,
+      postDeleteError: deletingPost ? "削除結果が不明です。再読み込みで確認してください。" : state.postDeleteError,
       bookmarkBusy: false,
       bookmarkNeedsReload: state.bookmarkNeedsReload || writingBookmark,
       bookmarkError: writingBookmark
@@ -567,6 +703,10 @@ export function createNotificationController(options: {
   }
   return {
     getState: () => state,
+    invalidatePost,
+    ownsCurrentPost,
+    canDeletePost,
+    deleteOwnPost,
     updateSession,
     openNotifications,
     loadMore,
