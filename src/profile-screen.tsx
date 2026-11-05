@@ -10,6 +10,7 @@ import type { createProfileController } from "./profile-controller.ts";
 import type { PostLikeStore } from "./post-like-controller.ts";
 import { NotificationScreen, postText } from "./notification-screen.tsx";
 import { PostMedia } from "./post-media.tsx";
+import { PostContent } from "./post-content.tsx";
 import { ProfileEdit } from "./profile-edit.tsx";
 import { PostLike } from "./post-like.tsx";
 export function ProfileScreen(props: {
@@ -396,10 +397,10 @@ export function ProfileScreen(props: {
                   {(post) => (
                     <li>
                       <MobilePreviewCard class="native-notification-post">
-                        <p>{postText(post.content)}</p>
-                        <PostMedia
-                          attachments={post.attachments}
+                        <PostContent
+                          post={post}
                           session={props.session}
+                          renderText={postText}
                           isActive={() =>
                             state().visible &&
                             postState().page === "home" &&

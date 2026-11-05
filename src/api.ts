@@ -37,6 +37,8 @@ export type MobilePost = Pick<
   "ap_id" | "content" | "like_count" | "reply_count" | "author"
 > & {
   published: string | null;
+  readonly summary?: Post["summary"];
+  readonly edited_at?: Post["edited_at"];
   attachments?: Post["attachments"];
   readonly likeState?: boolean | null;
 };
