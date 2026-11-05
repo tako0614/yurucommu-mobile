@@ -20,9 +20,11 @@ import {
 } from "@takosjp/mobile-kit/solid";
 import {
   loadYurucommuMobileBookmarksPage,
+  type MobilePost,
   type YurucommuMobileHome,
 } from "./api.ts";
 import { createFeedController, type FeedState } from "./feed-controller.ts";
+import { createFeedTimelineController, type FeedTimelineState } from "./feed-timeline-controller.ts";
 import { PostComposer } from "./post-composer.tsx";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 import { PostContent } from "./post-content.tsx";
@@ -69,6 +71,7 @@ export function Feed(props: {
   refreshHome: () => Promise<void>;
   likeActionsActive?: () => boolean;
   likes: PostLikeStore;
+  projectPosts?: (posts: readonly MobilePost[]) => readonly MobilePost[];
   onOpenPost: (apId: string, trigger: HTMLButtonElement) => void;
   onOpenProfile: (identifier: string, trigger: HTMLButtonElement) => void;
 }) {
@@ -91,12 +94,20 @@ export function Feed(props: {
   });
   createRenderEffect(() => controller.updateSession(props.session));
   onCleanup(() => controller.dispose());
-  const posts = () =>
-    appendUniqueMobileItemsByKey(
-      [],
-      props.home?.posts ?? [],
-      (post) => post.ap_id,
-    );
+  const [timeline, setTimeline] = createSignal<FeedTimelineState>({ posts: [], loading: false, error: "", status: "", continuationKnown: false, hasMore: false, canLoadMore: false });
+  const pager = createFeedTimelineController({
+    session: props.session, home: props.home, onChange: setTimeline,
+    projectPosts: posts => props.projectPosts?.(posts) ?? posts,
+    isActive: () => props.isActive?.() !== false && props.likeActionsActive?.() !== false,
+  });
+  setTimeline(pager.getState());
+  createRenderEffect(() => {
+    const selected = props.session, home = props.home;
+    const active = props.isActive?.() !== false && props.likeActionsActive?.() !== false;
+    untrack(() => { pager.updateHome(selected, home); if (!active) pager.pause(); });
+  });
+  onCleanup(() => pager.dispose());
+  const posts = () => timeline().posts;
   return (
     <div class="mobile-feed">
       <PostComposer controller={controller} state={state()} />
@@ -199,6 +210,16 @@ export function Feed(props: {
                 )}
               </For>
             </MobilePreviewList>
+          </Show>
+          <Show when={timeline().error}><p role="alert">{timeline().error}</p></Show>
+          <Show when={timeline().status}><p role="status">{timeline().status}</p></Show>
+          <Show when={!timeline().continuationKnown}>
+            <p role="status">このサーバーの応答ではフィードの続き情報を確認できません。</p>
+          </Show>
+          <Show when={timeline().hasMore}>
+            <button type="button" class="secondary" disabled={!timeline().canLoadMore} onClick={() => void pager.loadMore()}>
+              {timeline().loading ? "読み込み中…" : timeline().error ? "続きを再試行" : "以前の投稿を読み込む"}
+            </button>
           </Show>
         </Show>
       </MobilePreviewSection>

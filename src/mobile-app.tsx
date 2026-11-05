@@ -111,8 +111,10 @@ export function createYurucommuMobileApp(
         current.dispose = dispose;
         const [home, setHome] = createSignal(context.home);
         const deletedPostIds = new Set<string>();
+        const projectHomePosts = (posts: Readonly<YurucommuMobileHome["posts"]>) =>
+          posts.filter((post) => !deletedPostIds.has(post.ap_id)).map((post) => edits.project(post));
         const withoutDeletedPosts = (value: YurucommuMobileHome | undefined) =>
-          value ? { ...value, posts: value.posts.filter((post) => !deletedPostIds.has(post.ap_id)).map((post) => edits.project(post)) } : value;
+          value ? { ...value, posts: projectHomePosts(value.posts) } : value;
         const forgetHomePost = (id: string) => {
           deletedPostIds.add(id);
           setHome((value) => withoutDeletedPosts(value));
@@ -380,6 +382,7 @@ export function createYurucommuMobileApp(
               >
                 <Feed
                   home={home()}
+                  projectPosts={projectHomePosts}
                   session={session()}
                   refreshHome={() => actions().refreshHome()}
                   likes={likes}
