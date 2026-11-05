@@ -9,6 +9,8 @@ import { createNotificationController } from "./notification-controller.ts";
 import { createProfileEditController } from "./profile-edit-controller.ts";
 import { createProfileFollowController } from "./profile-follow-controller.ts";
 import type { MobileNotificationPost } from "./notification-api.ts";
+import { createPostEditStore, type PostEditStore } from "./post-edit-store.ts";
+import type { MobileEditablePost } from "./post-edit-api.ts";
 export interface MobileProfileState {
   readonly visible: boolean;
   readonly loading: boolean;
@@ -54,6 +56,10 @@ export function createProfileController(options: {
   onRelationshipChanged?: () => Promise<void>;
   onProfileChanged?: () => Promise<void>;
   confirmDiscardProfile?: () => boolean | Promise<boolean>;
+  edits?: PostEditStore;
+  onPostEditReceipt?: (post: MobileEditablePost) => void;
+  onPostEditSaved?: () => Promise<void>;
+  confirmDiscardPostEdit?: () => boolean | Promise<boolean>;
 }) {
   let session = snapshotFeedSession(options.session),
     key = keyOf(session),
@@ -63,6 +69,8 @@ export function createProfileController(options: {
     generation = 0,
     pageRequest = 0;
   let postsInvalidation = 0, loadedInvalidation = 0;
+  const edits = options.edits ?? createPostEditStore({ session });
+  let profileEditorVisible = false;
   let actorRead: AbortController | undefined,
     pageRead: AbortController | undefined,
     failedMore = false,
@@ -81,7 +89,7 @@ export function createProfileController(options: {
   const makePosts = (): ReturnType<typeof createNotificationController> =>
     createNotificationController({
       session,
-      isActive: () => live() && state.visible,
+      isActive: () => live() && state.visible && !profileEditorVisible,
       onChange: changed,
       onPostReplied: options.onPostReplied,
       getActorId: options.getActorId,
@@ -107,6 +115,10 @@ export function createProfileController(options: {
       },
       onBookmarksChanged: options.onBookmarksChanged,
       confirmDiscardReply: options.confirmDiscardReply,
+      edits,
+      confirmDiscardPostEdit: options.confirmDiscardPostEdit,
+      onPostEditReceipt: (post) => { applyPostEdits();options.onPostEditReceipt?.(post); },
+      onPostEditSaved: options.onPostEditSaved,
     });
   let postController = makePosts();
   const makeEditor = (): ReturnType<typeof createProfileEditController> =>
@@ -120,7 +132,11 @@ export function createProfileController(options: {
         state.actor !== null &&
         (editor.getActorId() === null ||
           state.actor.ap_id === editor.getActorId()),
-      onChange: changed,
+      onChange: () => {
+        const visible = editor?.getState().visible ?? false;
+        if (visible && !profileEditorVisible) postController.pause();
+        profileEditorVisible = visible;changed();
+      },
       confirmDiscard: options.confirmDiscardProfile,
       onReceipt: (actor) => {
         if (live() && state.visible && state.actor?.ap_id === actor.ap_id)
@@ -235,7 +251,7 @@ export function createProfileController(options: {
       if (value.nextCursor) cursors.add(value.nextCursor);
       const posts = more ? [...state.posts] : [],
         seen = new Set(posts.map((p) => p.ap_id));
-      for (const post of value.posts)
+      for (const post of value.posts.map((post) => edits.project(post)))
         if (!seen.has(post.ap_id)) {
           seen.add(post.ap_id);
           posts.push(post);
@@ -316,8 +332,11 @@ export function createProfileController(options: {
       const different = state.actor?.ap_id !== actor.ap_id;
       if (different) {
         const draft = postController.getReplyComposer()?.getState();
+        const editing = postController.hasPostEditDraft();
+        const editorOwner = postController,
+          editRevision = postController.getPostEditRevision();
         if (
-          draft &&
+          editing || draft &&
           (draft.content.length ||
             draft.attachments.length ||
             draft.sending ||
@@ -325,9 +344,12 @@ export function createProfileController(options: {
         ) {
           let discard = false;
           try {
-            discard = (await options.confirmDiscardReply?.()) ?? false;
+            discard = (await (editing ? options.confirmDiscardPostEdit?.() : options.confirmDiscardReply?.())) ?? false;
           } catch {}
           if (!current(owner) || actorRead !== read) return false;
+          const changedEdit = editing && (postController !== editorOwner ||
+            postController.getPostEditRevision() !== editRevision);
+          if (changedEdit) discard = false;
           if (!discard) {
             publish({
               ...previous,
@@ -337,7 +359,7 @@ export function createProfileController(options: {
             });
             // Only an actual, still-owned decline may request origin focus.
             // Retired/failed reads also return false, but must have no UI effect.
-            if (live() && generation === owner) options.onDeclined?.();
+            if (!changedEdit && live() && generation === owner) options.onDeclined?.();
             return false;
           }
         }
@@ -400,6 +422,8 @@ export function createProfileController(options: {
     if (nextKey === key) return;
     session = snapshotFeedSession(next);
     key = nextKey;
+    edits.updateSession(session);
+    profileEditorVisible = false;
     generation++;
     cancel();
     postController.dispose();
@@ -421,9 +445,16 @@ export function createProfileController(options: {
     disposeRelationships();
     editor.dispose();
     state = initial();
+    if (!options.edits) edits.clear();
+  }
+  function applyPostEdits() {
+    postController.applyPostEdits();
+    const posts = state.posts.map((post) => edits.project(post));
+    if (posts.some((post, index) => post !== state.posts[index])) publish({ ...state, posts });
   }
   return {
     getState: () => state,
+    applyPostEdits,
     getPostController: () => postController,
     getEditor: () => editor,
     getFollowController: () =>

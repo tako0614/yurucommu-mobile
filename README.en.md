@@ -190,3 +190,17 @@ an unknown outcome keeps the detail and requires an explicit reload without
 automatic resend. Retired view/account responses cannot update the new view.
 These are App source/portable behaviors, separate from device, installed-server
 and ActivityPub delivery qualification.
+
+Own-post details offer an inline editor for text and content warnings. The editor
+uses the server's original string without reconstructing it from displayed HTML.
+The limits match the existing edit contract: 5,000 content characters and 500
+warning characters. PATCH includes changed fields only; an empty string removes
+an existing warning. Audience, visibility and attachments remain unchanged.
+New input survives an in-flight save. Unknown outcomes require explicit GET
+recovery without automatic resend. Closing and reopening the same post retains
+its edit; moving to another post asks before discarding unsaved work. Confirmed
+text updates conversations, profiles, home and bookmarks without allowing older
+reads to restore it. Changing only the selected API endpoint also retires the
+previous operation scope. Preflight detects fields already changed by another
+writer, but the existing API has no atomic edit CAS, so a subsequent writer may
+still race it. App source/local evidence does not qualify devices or deployment.

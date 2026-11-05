@@ -28,6 +28,7 @@ import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 import { PostMedia } from "./post-media.tsx";
 import { PostLike } from "./post-like.tsx";
 import type { PostLikeStore } from "./post-like-controller.ts";
+import type { PostEditStore } from "./post-edit-store.ts";
 import {
   displayHostRoutePath,
   hostRouteNoticeFor,
@@ -204,6 +205,8 @@ export function Feed(props: {
 }
 
 export function BookmarksPreview(props: {
+  edits?: PostEditStore;
+  editRevision?: number;
   session: MobileSession;
   revision?: number;
   isActive?: () => boolean;
@@ -271,6 +274,10 @@ export function BookmarksPreview(props: {
     props.revision;
     void refresh(currentSession(), key);
   });
+  const editedPosts = () => {
+    props.editRevision;
+    return posts().map((post) => props.edits?.project(post) ?? post);
+  };
   return (
     <MobilePreviewSection
       title="保存した投稿"
@@ -293,7 +300,7 @@ export function BookmarksPreview(props: {
             fallback={<p class="empty">保存した投稿はありません。</p>}
           >
             <MobilePreviewList>
-              <For each={posts().slice(0, 3)}>
+              <For each={editedPosts().slice(0, 3)}>
                 {(post) => (
                   <li>
                     <MobilePreviewCard class="feed-card">

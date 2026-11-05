@@ -5,6 +5,9 @@ import {
 import type { Notification } from "@takosjp/yurucommu-api";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 import { deleteMobileOwnPost, MobilePostDeleteError } from "./post-delete-api.ts";
+import { createPostEditController, type PostEditController, type MobilePostEditState } from "./post-edit-controller.ts";
+import { createPostEditStore, type PostEditStore } from "./post-edit-store.ts";
+import type { MobileEditablePost } from "./post-edit-api.ts";
 import { setMobilePostBookmark } from "./api.ts";
 import { createFeedController, type FeedState } from "./feed-controller.ts";
 import {
@@ -40,6 +43,7 @@ export interface NotificationState {
   readonly repliesHasMore: boolean;
   readonly repliesCursor: string | null;
   readonly replyDraft?: FeedState;
+  readonly postEdit?: MobilePostEditState;
 }
 const emptyReplies = () => ({
   replies: [] as readonly MobileNotificationPost[],
@@ -85,9 +89,14 @@ export function createNotificationController(options: {
   onPostDeleteConfirmed?: (postId: string) => void;
   onPostDeleted?: (postId: string) => Promise<void>;
   confirmDiscardReply?: () => boolean | Promise<boolean>;
+  edits?: PostEditStore;
+  onPostEditReceipt?: (post: MobileEditablePost) => void;
+  onPostEditSaved?: () => Promise<void>;
+  confirmDiscardPostEdit?: () => boolean | Promise<boolean>;
 }) {
   let session = snapshotFeedSession(options.session);
   let sessionKey = feedSessionIdentity(session);
+  const edits = options.edits ?? createPostEditStore({ session });
   let authority = 0,
     request = 0;
   let disposed = false;
@@ -102,6 +111,7 @@ export function createNotificationController(options: {
   let failedRepliesContinuation = false;
   let replyId: string | undefined;
   let replyComposer: ReturnType<typeof createFeedController> | undefined;
+  let postEditor: PostEditController | undefined, postEditorId: string | undefined;
   let postHistory: {
     id: string;
     replies: ReturnType<typeof emptyReplies>;
@@ -124,6 +134,7 @@ export function createNotificationController(options: {
     activeDelete = undefined;
   }
   function startRead() {
+    postEditor?.pause();
     cancelDelete();
     cancelBookmark();
     cancelReplies();
@@ -134,6 +145,7 @@ export function createNotificationController(options: {
     return read;
   }
   function cancelRead() {
+    postEditor?.pause();
     cancelDelete();
     cancelBookmark();
     cancelReplies();
@@ -165,6 +177,8 @@ export function createNotificationController(options: {
     replyId = undefined;
     postHistory = [];
     cancelRead();
+    releasePostEditor();
+    edits.updateSession(session);
     postId = undefined;
     failedContinuation = false;
     state = initial();
@@ -251,7 +265,8 @@ export function createNotificationController(options: {
           state.page === "post" &&
           postId === id &&
           !!state.post?.replyContext &&
-          !state.postDeleteBusy && !state.postDeleteNeedsReload,
+          !state.postDeleteBusy && !state.postDeleteNeedsReload &&
+          !postEditor?.getState().visible && !postEditor?.hasDraft(),
         onChange: (draft) => {
           if (live() && state.page === "post" && postId === id)
             publish({ ...state, replyDraft: draft });
@@ -313,7 +328,7 @@ export function createNotificationController(options: {
       const previous = more ? state.replies : [];
       const seen = new Set(previous.map((post) => post.ap_id));
       const replies = [...previous];
-      for (const post of page.replies)
+      for (const post of page.replies.map((post) => edits.project(post)))
         if (!seen.has(post.ap_id)) {
           seen.add(post.ap_id);
           replies.push(post);
@@ -351,6 +366,16 @@ export function createNotificationController(options: {
     if (!live()) return;
     const beforeOwner = authority,
       beforeRequest = request;
+    if (postEditor && postEditorId !== id) {
+      if (postEditor.hasDraft()) {
+        const editor = postEditor, revision = editor.getRevision();
+        let discard = false;
+        try { discard = (await options.confirmDiscardPostEdit?.()) ?? false; } catch {}
+        if (!current(beforeOwner, beforeRequest) || !discard ||
+          postEditor !== editor || editor.getRevision() !== revision) return;
+      }
+      releasePostEditor();
+    }
     if (replyComposer && replyId !== id) {
       const draft = replyComposer.getState();
       if (draft.content.length || draft.attachments.length || draft.sending) {
@@ -410,7 +435,7 @@ export function createNotificationController(options: {
       replyDraft: undefined,
     });
     try {
-      const post = await loadMobileNotificationPost(session, id, read.signal);
+      const post = edits.project(await loadMobileNotificationPost(session, id, read.signal));
       if (current(owner, generation)) {
         ensureReply(post, id);
         publish({
@@ -515,7 +540,43 @@ export function createNotificationController(options: {
   function canDeletePost(): boolean {
     return ownsCurrentPost() && !state.loading && !state.bookmarkBusy &&
       !state.bookmarkNeedsReload && !state.postDeleteBusy &&
-      !state.postDeleteNeedsReload && !hasReplyDraft();
+      !state.postDeleteNeedsReload && !hasReplyDraft() &&
+      !postEditor?.getState().visible && !postEditor?.hasDraft();
+  }
+  function releasePostEditor() {
+    const previous = postEditor;postEditor = undefined;postEditorId = undefined;
+    previous?.dispose();state = { ...state, postEdit: undefined };
+  }
+  function applyPostEdits() {
+    const projectReplies = (rows: readonly MobileNotificationPost[]) => rows.map((post) => edits.project(post));
+    postHistory = postHistory.map((entry) => ({ ...entry, replies: { ...entry.replies, replies: projectReplies(entry.replies.replies) } }));
+    const post = state.post ? edits.project(state.post) : undefined, replies = projectReplies(state.replies);
+    if (post !== state.post || replies.some((post, index) => post !== state.replies[index]))
+      publish({ ...state, post, replies });
+  }
+  function canEditPost() {
+    return ownsCurrentPost() && state.post?.type === "Note" && !state.loading && !state.bookmarkBusy &&
+      !state.bookmarkNeedsReload && !state.postDeleteBusy && !state.postDeleteNeedsReload && !hasReplyDraft();
+  }
+  async function editOwnPost() {
+    if (!canEditPost() || !state.post || !postId) return;
+    if (!postEditor || postEditorId !== postId) {
+      releasePostEditor();
+      const id = postId, authorId = state.post.author.ap_id;
+      const editor: PostEditController = createPostEditController({
+        session, postId: id, authorId,
+        isActive: () => live() && state.page === "post" && postId === id && !state.postDeleteNeedsReload,
+        onChange: () => { if (postEditor === editor) publish({ ...state, postEdit: editor.getState() }); },
+        onReceipt: (post) => {
+          if (postEditor !== editor || !edits.record(post)) return;
+          applyPostEdits();options.onPostEditReceipt?.(post);
+        },
+        onSaved: options.onPostEditSaved,
+        confirmDiscard: options.confirmDiscardPostEdit,
+      });
+      postEditor = editor;postEditorId = id;
+    }
+    await postEditor.show();
   }
   function invalidatePost(id: string) {
     if (!live()) return;
@@ -615,6 +676,7 @@ export function createNotificationController(options: {
       state.bookmarkBusy ||
       state.bookmarkNeedsReload ||
       state.postDeleteBusy || state.postDeleteNeedsReload ||
+      postEditor?.getState().visible || postEditor?.getState().uncertain ||
       state.loading
     )
       return;
@@ -692,6 +754,8 @@ export function createNotificationController(options: {
   function dispose() {
     disposed = true;
     cancelRead();
+    releasePostEditor();
+    if (!options.edits) edits.clear();
     replyComposer?.dispose();
     replyComposer = undefined;
     replyId = undefined;
@@ -703,6 +767,12 @@ export function createNotificationController(options: {
   }
   return {
     getState: () => state,
+    applyPostEdits,
+    editOwnPost,
+    canEditPost,
+    getPostEditor: () => postEditor,
+    getPostEditRevision: () => postEditor?.getRevision() ?? null,
+    hasPostEditDraft: () => postEditor?.hasDraft() ?? false,
     invalidatePost,
     ownsCurrentPost,
     canDeletePost,
