@@ -210,3 +210,12 @@ and profiles. Each card offers explicit show/hide controls for its text and medi
 media still requires its existing explicit load action after revealing the post.
 Disclosure stays local to the card and resets when content, warning, attachment,
 connection or account changes, or when the surface becomes inactive.
+
+Home offers explicit continuation beyond the first 20 posts using the server's
+opaque cursor, with duplicate boundary posts removed. Failed reads retain the
+current rows and composer draft; retry reads the same cursor only on request.
+Leaving the surface cancels an unfinished page, and a new first-page read or
+connection/account change retires the previous continuation. Confirmed edits and
+deletions also project into added pages. Legacy responses without continuation
+metadata remain readable but do not establish either a next page or the end.
+These are source/local behaviors, separate from device and deployed use.

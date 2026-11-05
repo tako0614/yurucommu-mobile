@@ -47,6 +47,17 @@ export interface YurucommuMobileHome {
   actor: MobileActor;
   posts: MobilePost[];
   unread: number;
+  // Each first-page read gets a new envelope; cache projections retain it.
+  readonly timeline?: MobileTimelineContinuation;
+}
+
+export interface MobileTimelineContinuation {
+  readonly hasMore: boolean | null;
+  readonly nextCursor: string | null;
+}
+
+export interface MobileTimelinePage extends MobileTimelineContinuation {
+  readonly posts: MobilePost[];
 }
 
 export async function loadHome(
@@ -60,7 +71,8 @@ export async function loadHome(
       fetchMobileTimeline(request, selected),
       fetchMobileUnreadCount(request),
     ]);
-    return { actor, posts: timeline, unread };
+    return { actor, posts: timeline.posts, unread,
+      timeline: { hasMore: timeline.hasMore, nextCursor: timeline.nextCursor } };
   });
 }
 
@@ -760,19 +772,46 @@ async function fetchMobileUnreadCount(
 async function fetchMobileTimeline(
   request: MobileReadRequest,
   selected: MobileSession,
-): Promise<MobilePost[]> {
+  before?: string,
+): Promise<MobileTimelinePage> {
   // The published SDK's timeline helper substitutes [] for an absent posts
   // member. Validate the actual response before that fallback can hide it.
   const startedAt = performance.now();
-  const response = await request("/api/timeline?limit=20");
+  const query = new URLSearchParams({ limit: "20" });
+  if (before !== undefined) {
+    if (typeof before !== "string" || !before.trim())
+      throw new Error("フィードの続きの位置が不正です。");
+    query.set("before", before);
+  }
+  const response = await request(`/api/timeline?${query}`);
   await assertOk(response, "Failed to load timeline");
   const value: unknown = await response.json();
   if (!isRecord(value) || !Array.isArray(value.posts)) {
     throw new Error("Yurucommu timeline response is invalid.");
   }
-  return value.posts.map((post) =>
+  let hasMore: boolean | null = null, nextCursor: string | null = null;
+  if ("has_more" in value || "next_cursor" in value) {
+    if (typeof value.has_more !== "boolean" ||
+      (value.next_cursor !== undefined && value.next_cursor !== null && !nonEmptyString(value.next_cursor)) ||
+      (value.has_more && !nonEmptyString(value.next_cursor)) ||
+      (!value.has_more && value.next_cursor != null))
+      throw new Error("フィードの続き情報を確認できませんでした。");
+    hasMore = value.has_more;
+    nextCursor = typeof value.next_cursor === "string" ? value.next_cursor : null;
+  } else if (before !== undefined) {
+    throw new Error("このサーバーの応答ではフィードの続き情報を確認できません。");
+  }
+  const posts = value.posts.map((post) =>
     recordMobilePostLikeRead(decodeMobilePost(post), selected, startedAt),
   );
+  return { posts, hasMore, nextCursor };
+}
+
+export function loadMobileTimelinePage(
+  session: MobileSession, before?: string, signal?: AbortSignal,
+): Promise<MobileTimelinePage> {
+  const selected = snapshotFeedSession(session);
+  return withMobileReadScope(selected, signal, request => fetchMobileTimeline(request, selected, before));
 }
 
 async function fetchMobileCurrentActor(
