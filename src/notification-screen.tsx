@@ -1,7 +1,9 @@
 import { createEffect, For, on, Show } from "solid-js";
 import { formatMobilePreviewDate } from "@takosjp/mobile-kit";
 import type { MobileSession } from "@takosjp/mobile-kit";
-import { PostMedia } from "./post-media.tsx";
+import { PostContent } from "./post-content.tsx";
+import { postText } from "./post-text.ts";
+export { postText } from "./post-text.ts";
 import { PostLike } from "./post-like.tsx";
 import type { PostLikeStore } from "./post-like-controller.ts";
 import { PostComposer } from "./post-composer.tsx";
@@ -25,23 +27,6 @@ const labels: Record<string, string> = {
   reply: "返信しました",
   mention: "あなたに言及しました",
 };
-
-// Keep ActivityPub HTML inert. Content is displayed as text, without loading
-// remote images or treating a notification's content as executable markup.
-export function postText(content: string): string {
-  const template = document.createElement("template");
-  template.innerHTML = content;
-  template.content
-    .querySelectorAll("script,style,noscript")
-    .forEach((node) => node.remove());
-  template.content
-    .querySelectorAll("br")
-    .forEach((node) => node.replaceWith("\n"));
-  template.content
-    .querySelectorAll("p,div,li")
-    .forEach((node) => node.append("\n"));
-  return template.content.textContent?.trim() ?? "";
-}
 
 export function NotificationScreen(props: {
   session: MobileSession;
@@ -267,10 +252,11 @@ export function NotificationScreen(props: {
                       post().author.ap_id}
                   </button>
                 </p>
-                <p>{postText(post().content)}</p>
-                <PostMedia
-                  attachments={post().attachments}
+                <PostContent
+                  post={post()}
                   session={props.session}
+                  isActive={() => props.isActive?.() !== false && props.state.page === "post"}
+                  renderText={postText}
                 />
                 <Show
                   when={post().bookmarkState !== null}
@@ -445,10 +431,11 @@ export function NotificationScreen(props: {
                               reply.author.preferred_username ||
                               reply.author.ap_id}
                           </button>
-                          <p>{postText(reply.content)}</p>
-                          <PostMedia
-                            attachments={reply.attachments}
+                          <PostContent
+                            post={reply}
                             session={props.session}
+                            isActive={() => props.isActive?.() !== false && props.state.page === "post"}
+                            renderText={postText}
                           />
                           <button
                             type="button"

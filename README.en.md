@@ -204,3 +204,9 @@ reads to restore it. Changing only the selected API endpoint also retires the
 previous operation scope. Preflight detects fields already changed by another
 writer, but the existing API has no atomic edit CAS, so a subsequent writer may
 still race it. App source/local evidence does not qualify devices or deployment.
+
+Posts with content warnings start collapsed in home, bookmarks, details, replies
+and profiles. Each card offers explicit show/hide controls for its text and media;
+media still requires its existing explicit load action after revealing the post.
+Disclosure stays local to the card and resets when content, warning, attachment,
+connection or account changes, or when the surface becomes inactive.

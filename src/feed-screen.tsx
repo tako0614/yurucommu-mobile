@@ -25,7 +25,7 @@ import {
 import { createFeedController, type FeedState } from "./feed-controller.ts";
 import { PostComposer } from "./post-composer.tsx";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
-import { PostMedia } from "./post-media.tsx";
+import { PostContent } from "./post-content.tsx";
 import { PostLike } from "./post-like.tsx";
 import type { PostLikeStore } from "./post-like-controller.ts";
 import type { PostEditStore } from "./post-edit-store.ts";
@@ -155,11 +155,13 @@ export function Feed(props: {
                           <small>@{post.author.preferred_username}</small>
                         </div>
                       </div>
-                      <p>{post.content}</p>
-                      <PostMedia
-                        attachments={post.attachments}
+                      <PostContent
+                        post={post}
                         session={props.session}
-                        isActive={props.isActive}
+                        isActive={() =>
+                          props.isActive?.() !== false &&
+                          props.likeActionsActive?.() !== false
+                        }
                       />
                       <footer>
                         <button
@@ -320,7 +322,14 @@ export function BookmarksPreview(props: {
                           post.author.preferred_username ||
                           post.author.ap_id}
                       </button>
-                      <p>{post.content}</p>
+                      <PostContent
+                        post={post}
+                        session={props.session}
+                        isActive={() =>
+                          props.isActive?.() !== false &&
+                          props.likeActionsActive?.() !== false
+                        }
+                      />
                       <PostLike
                         session={props.session}
                         post={post}
@@ -329,11 +338,6 @@ export function BookmarksPreview(props: {
                           props.likeActionsActive?.() !== false
                         }
                         store={props.likes}
-                      />
-                      <PostMedia
-                        attachments={post.attachments}
-                        session={props.session}
-                        isActive={props.isActive}
                       />
                       <button
                         type="button"
