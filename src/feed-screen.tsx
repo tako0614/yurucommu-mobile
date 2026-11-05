@@ -158,7 +158,10 @@ export function Feed(props: {
                       <PostContent
                         post={post}
                         session={props.session}
-                        isActive={props.isActive}
+                        isActive={() =>
+                          props.isActive?.() !== false &&
+                          props.likeActionsActive?.() !== false
+                        }
                       />
                       <footer>
                         <button
@@ -319,7 +322,14 @@ export function BookmarksPreview(props: {
                           post.author.preferred_username ||
                           post.author.ap_id}
                       </button>
-                      <PostContent post={post} session={props.session} isActive={props.isActive} />
+                      <PostContent
+                        post={post}
+                        session={props.session}
+                        isActive={() =>
+                          props.isActive?.() !== false &&
+                          props.likeActionsActive?.() !== false
+                        }
+                      />
                       <PostLike
                         session={props.session}
                         post={post}
