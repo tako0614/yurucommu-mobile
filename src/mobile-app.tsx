@@ -33,6 +33,7 @@ import {
   type NativeNotificationRouteRequest,
 } from "./host-route.ts";
 import { createProfileController } from "./profile-controller.ts";
+import { createPostEditStore } from "./post-edit-store.ts";
 import { ProfileScreen } from "./profile-screen.tsx";
 import { createPostLikeStore } from "./post-like-controller.ts";
 import { createNotificationController } from "./notification-controller.ts";
@@ -111,13 +112,21 @@ export function createYurucommuMobileApp(
         const [home, setHome] = createSignal(context.home);
         const deletedPostIds = new Set<string>();
         const withoutDeletedPosts = (value: YurucommuMobileHome | undefined) =>
-          value ? { ...value, posts: value.posts.filter((post) => !deletedPostIds.has(post.ap_id)) } : value;
+          value ? { ...value, posts: value.posts.filter((post) => !deletedPostIds.has(post.ap_id)).map((post) => edits.project(post)) } : value;
         const forgetHomePost = (id: string) => {
           deletedPostIds.add(id);
           setHome((value) => withoutDeletedPosts(value));
         };
         const [session, setSession] = createSignal(context.session);
         const [actions, setActions] = createSignal(context);
+        const [editRevision, setEditRevision] = createSignal(0);
+        const edits = createPostEditStore({ session: context.session, onChange: () => setEditRevision(value => value + 1) });
+        createRenderEffect(() => edits.updateSession(session()));
+        onCleanup(() => edits.clear());
+        function applyPostEdits() {
+          profiles.applyPostEdits();notifications.applyPostEdits();
+          setHome((value) => withoutDeletedPosts(value));
+        }
         const likes = createPostLikeStore({
           session: context.session,
           isActive: () => current.active,
@@ -128,6 +137,10 @@ export function createYurucommuMobileApp(
         const [bookmarkRevision, setBookmarkRevision] = createSignal(0);
         const [profileRevision, setProfileRevision] = createSignal(0);
         const profiles = createProfileController({
+          edits,
+          onPostEditReceipt: applyPostEdits,
+          onPostEditSaved: () => actions().refreshHome(),
+          confirmDiscardPostEdit: () => confirmMobileAction({ message: "入力中の投稿編集を閉じますか？未保存の変更は失われます。保存結果が不明な場合は、現在の投稿を確認してください。" }),
           session: context.session,
           isActive: () => current.active,
           onChange: () => setProfileRevision((value) => value + 1),
@@ -162,6 +175,10 @@ export function createYurucommuMobileApp(
         createRenderEffect(() => profiles.updateSession(session()));
         onCleanup(() => profiles.dispose());
         const notifications = createNotificationController({
+          edits,
+          onPostEditReceipt: applyPostEdits,
+          onPostEditSaved: () => actions().refreshHome(),
+          confirmDiscardPostEdit: () => confirmMobileAction({ message: "入力中の投稿編集を閉じますか？未保存の変更は失われます。保存結果が不明な場合は、現在の投稿を確認してください。" }),
           session: context.session,
           isActive: () => current.active,
           onChange: () => setNotificationRevision((value) => value + 1),
@@ -310,6 +327,7 @@ export function createYurucommuMobileApp(
               feedSessionIdentity(snapshot.session) !==
               feedSessionIdentity(session())
             ) {
+              deletedPostIds.clear();
               postOrigin = undefined;
               profileOrigin = undefined;
               if (adoptedRoute && requestedRoute() === adoptedRoute)
@@ -374,6 +392,8 @@ export function createYurucommuMobileApp(
                   onOpenProfile={openProfile}
                 />
                 <BookmarksPreview
+                  edits={edits}
+                  editRevision={editRevision()}
                   likes={likes}
                   likeActionsActive={() =>
                     notificationState().page === "home" &&

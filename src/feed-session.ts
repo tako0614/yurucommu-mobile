@@ -10,7 +10,7 @@ export function snapshotFeedSession(session: MobileSession): MobileSession {
 export function feedSessionIdentity(session: MobileSession): string {
   return JSON.stringify([
     session.hostUrl, session.product, session.accessToken,
-    session.tokenType, session.createdAt, session.oidcIssuer, session.oidcClientId,
+    session.tokenType, session.createdAt, session.oidcIssuer, session.oidcClientId, session.apiBaseUrl,
     Object.entries(session.productEndpoints ?? {}).sort(([a], [b]) => a.localeCompare(b)),
   ]);
 }

@@ -5,6 +5,7 @@ import { PostMedia } from "./post-media.tsx";
 import { PostLike } from "./post-like.tsx";
 import type { PostLikeStore } from "./post-like-controller.ts";
 import { PostComposer } from "./post-composer.tsx";
+import { PostEditor } from "./post-editor.tsx";
 import {
   MobilePreviewCard,
   MobilePreviewList,
@@ -53,6 +54,7 @@ export function NotificationScreen(props: {
 }) {
   let heading: HTMLHeadingElement | undefined;
   let openButton: HTMLButtonElement | undefined;
+  let editButton: HTMLButtonElement | undefined;
   createEffect(
     on(
       () => [props.state.post?.ap_id, props.state.repliesLoaded, props.isActive?.() !== false] as const,
@@ -113,7 +115,7 @@ export function NotificationScreen(props: {
             disabled={
               props.state.loading ||
               props.state.loadingMore ||
-              props.state.bookmarkBusy || props.state.postDeleteBusy
+              props.state.bookmarkBusy || props.state.postDeleteBusy || props.state.postEdit?.visible
             }
             onClick={() => void props.controller.reload()}
           >
@@ -242,7 +244,8 @@ export function NotificationScreen(props: {
                   post={post()}
                   isActive={() =>
                     props.isActive?.() !== false && props.state.page === "post" &&
-                    !props.state.postDeleteBusy && !props.state.postDeleteNeedsReload
+                    !props.state.postDeleteBusy && !props.state.postDeleteNeedsReload &&
+                    !props.state.postEdit?.visible && !props.state.postEdit?.uncertain
                   }
                   store={props.likes}
                 />
@@ -281,7 +284,8 @@ export function NotificationScreen(props: {
                     aria-pressed={post().bookmarkState === true}
                     disabled={
                       props.state.bookmarkBusy ||
-                      props.state.bookmarkNeedsReload || props.state.postDeleteBusy || props.state.postDeleteNeedsReload
+                      props.state.bookmarkNeedsReload || props.state.postDeleteBusy || props.state.postDeleteNeedsReload ||
+                      props.state.postEdit?.visible || props.state.postEdit?.uncertain
                     }
                     onClick={() => void props.controller.toggleBookmark()}
                   >
@@ -296,11 +300,18 @@ export function NotificationScreen(props: {
                   <p role="alert">{props.state.bookmarkError}</p>
                 </Show>
                 <Show when={props.state.post && props.controller.ownsCurrentPost()}>
+                  <Show when={props.state.post?.type === "Note" && !props.state.postEdit?.visible}>
+                    <button ref={editButton} type="button" class="text-button"
+                      disabled={props.state.loading || !props.controller.canEditPost()}
+                      onClick={() => void props.controller.editOwnPost()}>
+                      {props.state.postEdit?.uncertain ? "編集の保存状態を確認" : props.state.postEdit?.dirty ? "投稿を編集（未保存）" : "投稿を編集"}
+                    </button>
+                  </Show>
                   <button type="button" class="text-button" disabled={props.state.page !== "post" || !props.controller.canDeletePost()} onClick={() => void props.controller.deleteOwnPost()}>
                     {props.state.postDeleteBusy ? "削除中…" : "投稿を削除"}
                   </button>
                   <Show when={props.state.replyDraft && (props.state.replyDraft.content.length || props.state.replyDraft.attachments.length || props.state.replyDraft.sending)}>
-                    <p>返信の下書き・添付や送信中の返信を整理してから削除してください。</p>
+                    <p>返信の下書き・添付や送信中の返信を整理してから編集・削除してください。</p>
                   </Show>
                 </Show>
                 <Show when={props.state.postDeleteError}>
@@ -317,11 +328,24 @@ export function NotificationScreen(props: {
                   )}
                 </Show>
               </MobilePreviewCard>
+              <Show when={props.state.postEdit?.visible ? props.state.postEdit : undefined}>
+                {(edit) => <PostEditor state={edit()} controller={props.controller.getPostEditor()!} onClose={() => {
+                  const id = props.state.post?.ap_id, session = props.session;
+                  props.controller.getPostEditor()?.hide();
+                  queueMicrotask(() => {
+                    if (props.session === session && props.state.post?.ap_id === id && props.isActive?.() !== false && editButton?.isConnected) editButton.focus();
+                  });
+                }} />}
+              </Show>
+              <Show when={!props.state.postEdit?.visible && (props.state.postEdit?.dirty || props.state.postEdit?.uncertain)}>
+                <p>未保存または未確認の投稿編集があります。編集ボタンから続けてください。</p>
+              </Show>
               <Show
                 when={post().replyContext}
                 fallback={<p>この投稿の返信先・公開範囲を確認できません。</p>}
               >
-                <Show when={!props.state.postDeleteBusy && !props.state.postDeleteNeedsReload ? props.state.replyDraft : undefined}>
+                <Show when={!props.state.postDeleteBusy && !props.state.postDeleteNeedsReload &&
+                  !props.state.postEdit?.visible && !props.state.postEdit?.dirty && !props.state.postEdit?.uncertain ? props.state.replyDraft : undefined}>
                   {(draft) => (
                     <PostComposer
                       controller={props.controller.getReplyComposer()!}
