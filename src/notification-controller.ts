@@ -82,7 +82,8 @@ export function createNotificationController(options: {
   onPostReplied?: () => Promise<void>;
   getActorId?: () => string | undefined;
   confirmDeletePost?: () => boolean | Promise<boolean>;
-  onPostDeleted?: () => Promise<void>;
+  onPostDeleteConfirmed?: (postId: string) => void;
+  onPostDeleted?: (postId: string) => Promise<void>;
   confirmDiscardReply?: () => boolean | Promise<boolean>;
 }) {
   let session = snapshotFeedSession(options.session);
@@ -516,6 +517,27 @@ export function createNotificationController(options: {
       !state.bookmarkNeedsReload && !state.postDeleteBusy &&
       !state.postDeleteNeedsReload && !hasReplyDraft();
   }
+  function invalidatePost(id: string) {
+    if (!live()) return;
+    postHistory = postHistory.filter((entry) => entry.id !== id).map((entry) => ({
+      ...entry, cursors: [], replies: emptyReplies(),
+    }));
+    if (state.page !== "post") return;
+    if (postId === id) {
+      request++;
+      cancelRead();
+      publish({
+        ...state, ...emptyReplies(), post: undefined, loading: false,
+        loadingMore: false, postDeleteBusy: false, postDeleteNeedsReload: true,
+        error: "この投稿は別の画面で削除されました。",
+        replyDraft: replyComposer?.getState(),
+      });
+    } else if (state.replies.some((post) => post.ap_id === id)) {
+      cancelReplies();
+      replyCursors = new Set();
+      publish({ ...state, ...emptyReplies() });
+    }
+  }
   async function deleteOwnPost() {
     if (!canDeletePost() || !state.post || !postId) return;
     const owner = authority;
@@ -538,18 +560,27 @@ export function createNotificationController(options: {
       publish({ ...state, repliesLoading: false, repliesLoadingMore: false });
       await deleteMobileOwnPost(session, id, post.author.ap_id, abort.signal);
       if (!current(owner, generation) || abort.signal.aborted) return;
+      // Commit local cache invalidation before any navigational read can retire
+      // this view. This callback starts no asynchronous UI refresh.
+      options.onPostDeleteConfirmed?.(id);
       activeDelete = undefined;
       replyComposer?.dispose();
       replyComposer = undefined;
       replyId = undefined;
-      postHistory = postHistory.filter((entry) => entry.id !== id);
+      // Ancestor conversations may still contain this reply in a loaded page.
+      // Clear those pages before Back restores one, so the view reads them again.
+      postHistory = postHistory.filter((entry) => entry.id !== id).map((entry) => ({
+        ...entry,
+        cursors: [],
+        replies: emptyReplies(),
+      }));
       const returning = back();
       const refreshGeneration = request;
       await returning;
       if (!current(owner, refreshGeneration)) return;
       let notice = "投稿を削除しました。";
       try {
-        await options.onPostDeleted?.();
+        await options.onPostDeleted?.(id);
       } catch {
         notice = "投稿は削除済みです。一覧を更新できませんでした。再読み込みで確認してください。";
       }
@@ -672,6 +703,7 @@ export function createNotificationController(options: {
   }
   return {
     getState: () => state,
+    invalidatePost,
     ownsCurrentPost,
     canDeletePost,
     deleteOwnPost,

@@ -47,7 +47,8 @@ export function createProfileController(options: {
   onPostReplied?: () => Promise<void>;
   getActorId?: () => string | undefined;
   confirmDeletePost?: () => boolean | Promise<boolean>;
-  onPostDeleted?: () => Promise<void>;
+  onPostDeleteConfirmed?: (postId: string) => void;
+  onPostDeleted?: (postId: string) => Promise<void>;
   onBookmarksChanged?: () => void;
   onDeclined?: () => void;
   onRelationshipChanged?: () => Promise<void>;
@@ -61,6 +62,7 @@ export function createProfileController(options: {
     retiringFollow = false,
     generation = 0,
     pageRequest = 0;
+  let postsInvalidation = 0, loadedInvalidation = 0;
   let actorRead: AbortController | undefined,
     pageRead: AbortController | undefined,
     failedMore = false,
@@ -84,9 +86,24 @@ export function createProfileController(options: {
       onPostReplied: options.onPostReplied,
       getActorId: options.getActorId,
       confirmDeletePost: options.confirmDeletePost,
-      onPostDeleted: async () => {
-        await open(state.actor?.ap_id ?? state.identifier, true);
-        await options.onPostDeleted?.();
+      onPostDeleteConfirmed: (id) => {
+        postsInvalidation++;
+        options.onPostDeleteConfirmed?.(id);
+      },
+      onPostDeleted: async (id) => {
+        // Publish the confirmed deletion to sibling views while this scope is
+        // owned, before a slow profile read can be covered or retired.
+        const owner = generation;
+        let updateFailure: { cause: unknown } | undefined;
+        try { await options.onPostDeleted?.(id); }
+        catch (cause) { updateFailure = { cause }; }
+        if (!current(owner)) return;
+        const refreshing = open(state.actor?.ap_id ?? state.identifier, true);
+        const refreshOwner = generation;
+        const refreshed = await refreshing;
+        if (!current(refreshOwner)) return;
+        if (!refreshed) throw Error("プロフィールを更新できませんでした。");
+        if (updateFailure) throw updateFailure.cause;
       },
       onBookmarksChanged: options.onBookmarksChanged,
       confirmDiscardReply: options.confirmDiscardReply,
@@ -255,6 +272,8 @@ export function createProfileController(options: {
     refresh = false,
   ): Promise<boolean> {
     if (!live()) return false;
+    refresh ||= loadedInvalidation !== postsInvalidation;
+    const invalidation = postsInvalidation;
     if (
       !refresh &&
       !state.error &&
@@ -327,6 +346,7 @@ export function createProfileController(options: {
       } else postController.showHome();
       prepareFollow(actor);
       acceptedIdentifier = identifier;
+      loadedInvalidation = invalidation;
       publish({
         ...state,
         identifier,
@@ -386,6 +406,7 @@ export function createProfileController(options: {
     disposeRelationships();
     editor.dispose();
     state = initial();
+    postsInvalidation = loadedInvalidation = 0;
     acceptedIdentifier = undefined;
     postController = makePosts();
     editor = makeEditor();
@@ -408,6 +429,9 @@ export function createProfileController(options: {
     getFollowController: () =>
       state.actor ? relationships.get(state.actor.ap_id) : undefined,
     setFollowActive,
+    // Refresh canonical actor/count/posts on the next open; never open a hidden
+    // profile or send a request just because another view deleted a post.
+    invalidatePosts: () => { if (live()) postsInvalidation++; },
     open,
     close,
     updateSession,

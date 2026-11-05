@@ -55,13 +55,12 @@ export function NotificationScreen(props: {
   let openButton: HTMLButtonElement | undefined;
   createEffect(
     on(
-      () => props.state.post?.ap_id,
-      (id, previous) => {
+      () => [props.state.post?.ap_id, props.state.repliesLoaded, props.isActive?.() !== false] as const,
+      ([id, loaded, active], previous) => {
         if (
-          id &&
-          id !== previous &&
-          props.state.page === "post" &&
-          !props.state.repliesLoaded
+          id && active && !loaded && props.state.page === "post" &&
+          !props.state.repliesLoading &&
+          (!previous || id !== previous[0] || previous[1] || !previous[2])
         )
           void props.controller.reloadReplies();
       },

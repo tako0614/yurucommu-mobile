@@ -109,6 +109,13 @@ export function createYurucommuMobileApp(
       current.element = createRoot((dispose) => {
         current.dispose = dispose;
         const [home, setHome] = createSignal(context.home);
+        const deletedPostIds = new Set<string>();
+        const withoutDeletedPosts = (value: YurucommuMobileHome | undefined) =>
+          value ? { ...value, posts: value.posts.filter((post) => !deletedPostIds.has(post.ap_id)) } : value;
+        const forgetHomePost = (id: string) => {
+          deletedPostIds.add(id);
+          setHome((value) => withoutDeletedPosts(value));
+        };
         const [session, setSession] = createSignal(context.session);
         const [actions, setActions] = createSignal(context);
         const likes = createPostLikeStore({
@@ -136,10 +143,12 @@ export function createYurucommuMobileApp(
           onPostReplied: () => actions().refreshHome(),
           getActorId: () => home()?.actor.ap_id,
           confirmDeletePost: () => confirmMobileAction({ message: "この投稿を削除しますか？取り消しはできません。" }),
-          onPostDeleted: () => {
+          onPostDeleteConfirmed: (id) => {
+            forgetHomePost(id);
+            notifications.invalidatePost(id);
             setBookmarkRevision(value => value + 1);
-            return actions().refreshHome();
           },
+          onPostDeleted: () => actions().refreshHome(),
           confirmDiscardReply: () =>
             confirmMobileAction({
               message:
@@ -160,10 +169,12 @@ export function createYurucommuMobileApp(
           onPostReplied: () => actions().refreshHome(),
           getActorId: () => home()?.actor.ap_id,
           confirmDeletePost: () => confirmMobileAction({ message: "この投稿を削除しますか？取り消しはできません。" }),
-          onPostDeleted: () => {
+          onPostDeleteConfirmed: (id) => {
+            forgetHomePost(id);
+            profiles.invalidatePosts();
             setBookmarkRevision(value => value + 1);
-            return actions().refreshHome();
           },
+          onPostDeleted: () => actions().refreshHome(),
           confirmDiscardReply: () =>
             confirmMobileAction({
               message:
@@ -307,7 +318,7 @@ export function createYurucommuMobileApp(
               notifications.updateSession(snapshot.session);
             }
             setSession(snapshot.session);
-            setHome(snapshot.home);
+            setHome(withoutDeletedPosts(snapshot.home));
           }),
         );
         onCleanup(release);

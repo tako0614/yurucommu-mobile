@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import type { MobileSession } from "@takosjp/mobile-kit";
 import { createNotificationController } from "../src/notification-controller.ts";
+import { createProfileController } from "../src/profile-controller.ts";
 import { deleteMobileOwnPost, MobilePostDeleteError } from "../src/post-delete-api.ts";
 
 const originalFetch = globalThis.fetch;
@@ -229,3 +230,181 @@ for (const transition of ["session", "view", "dispose"] as const) {
     } finally { c.dispose(); }
   });
 }
+
+test("deleting a reply invalidates the cached parent conversation before Back restores it", async () => {
+  const parent = base + "/ap/posts/parent";
+  let deleted = false, deletes = 0;
+  const child = { ...wirePost(), in_reply_to: parent };
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/auth/me") return Response.json({ actor: { ap_id: owner } });
+    if (path === "/api/posts/" + encodeURIComponent(parent) + "/replies")
+      return Response.json({ replies: deleted ? [] : [child], has_more: false, next_cursor: null });
+    if (path === "/api/posts/" + encodeURIComponent(parent))
+      return Response.json({ post: { ...wirePost(), ap_id: parent, reply_count: deleted ? 0 : 1 } });
+    if (path === "/api/posts/" + encodeURIComponent(id)) {
+      if (init?.method === "DELETE") { deleted = true;deletes++;return Response.json({ success: true }); }
+      return deleted ? Response.json({ error: "Post not found" }, { status: 404 }) : Response.json({ post: child });
+    }
+    throw Error("Unexpected request: " + path);
+  }) as typeof fetch;
+  const c = createNotificationController({ session, getActorId: () => owner, confirmDeletePost: () => true });
+  try {
+    await c.openPost(parent);await c.reloadReplies();
+    expect(c.getState().replies.map(post => post.ap_id)).toEqual([id]);
+    await c.openReply(id);await c.deleteOwnPost();
+    expect(c.getState().post?.ap_id).toBe(parent);
+    expect(c.getState().replies).toHaveLength(0);
+    expect(c.getState().repliesLoaded).toBe(false);
+    await c.reloadReplies();
+    expect(c.getState().repliesLoaded).toBe(true);
+    expect(c.getState().replies).toHaveLength(0);
+    expect(deletes).toBe(1);
+  } finally { c.dispose(); }
+});
+
+test("feed deletion invalidates the hidden profile without opening it and reopening reads canonical rows/count", async () => {
+  let deleted = false, profileReads = 0, listReads = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/auth/me") return Response.json({ actor: { ap_id: owner } });
+    if (path === "/api/actors/" + encodeURIComponent(owner)) {
+      profileReads++;
+      return Response.json({ actor: { ...wirePost().author, summary: null, header_url: null, post_count: deleted ? 0 : 1 } });
+    }
+    if (path === "/api/actors/" + encodeURIComponent(owner) + "/posts") {
+      listReads++;
+      return Response.json({ posts: deleted ? [] : [wirePost()], has_more: false, next_cursor: null });
+    }
+    if (path === "/api/posts/" + encodeURIComponent(id)) {
+      if (init?.method === "DELETE") { deleted = true;return Response.json({ success: true }); }
+      return deleted ? Response.json({ error: "Post not found" }, { status: 404 }) : Response.json({ post: wirePost() });
+    }
+    throw Error("Unexpected request: " + path);
+  }) as typeof fetch;
+  const profiles = createProfileController({ session });
+  const c = createNotificationController({ session, getActorId: () => owner, confirmDeletePost: () => true, onPostDeleted: async () => {
+    profiles.invalidatePosts();
+  } });
+  try {
+    await profiles.open(owner);expect(profiles.getState().posts).toHaveLength(1);profiles.close();
+    await c.openPost(id);await c.deleteOwnPost();
+    expect(profiles.getState().visible).toBe(false);
+    expect([profileReads, listReads]).toEqual([1, 1]);
+    await profiles.open(owner);
+    expect(profiles.getState().posts).toHaveLength(0);
+    expect(profiles.getState().actor?.post_count).toBe(0);
+    expect([profileReads, listReads]).toEqual([2, 2]);
+  } finally { c.dispose();profiles.dispose(); }
+});
+
+for (const transition of ["close", "session", "dispose"] as const) {
+  test(`${transition} during the deleted post's profile refresh cannot refresh the next scope`, async () => {
+    const gate = deferred<Response>();
+    let actorReads = 0, deleted = false, refreshed = 0, calls = 0, retired = false;
+    const actor = { ...wirePost().author, summary: null, header_url: null, post_count: 1 };
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/api/auth/me") return Response.json({ actor: { ap_id: owner } });
+      if (path === "/api/actors/" + encodeURIComponent(owner)) {
+        actorReads++;return actorReads > 1 ? gate.promise : Response.json({ actor });
+      }
+      if (path === "/api/actors/" + encodeURIComponent(owner) + "/posts")
+        return Response.json({ posts: deleted ? [] : [wirePost()], has_more: false, next_cursor: null });
+      if (path === "/api/posts/" + encodeURIComponent(id)) {
+        if (init?.method === "DELETE") { deleted = true;return Response.json({ success: true }); }
+        return deleted ? Response.json({ error: "Post not found" }, { status: 404 }) : Response.json({ post: wirePost() });
+      }
+      throw Error("Unexpected request: " + path);
+    }) as typeof fetch;
+    const profiles = createProfileController({ session, getActorId: () => owner, confirmDeletePost: () => true, onPostDeleted: async () => { calls++;if (retired) refreshed++; } });
+    try {
+      await profiles.open(owner);const posts = profiles.getPostController();await posts.openPost(id);
+      const pending = posts.deleteOwnPost();const end = Date.now() + 500;
+      while (actorReads < 2 && Date.now() < end) await Bun.sleep(1);
+      expect(actorReads).toBe(2);
+      retired = true;
+      if (transition === "close") profiles.close();
+      else if (transition === "session") profiles.updateSession({ ...session, accessToken: "next-profile-account" });
+      else profiles.dispose();
+      gate.resolve(Response.json({ actor: { ...actor, post_count: 0 } }));await pending;
+      expect(refreshed).toBe(0);
+      expect(calls).toBe(1);
+    } finally { profiles.dispose(); }
+  });
+}
+
+test("a confirmed deletion in another view retires this detail without discarding its reply draft", async () => {
+  const f = fixture();
+  try {
+    await f.c.openPost(id);f.c.getReplyComposer()!.setDraft("Keep this unsent reply");f.c.pause();
+    f.c.invalidatePost(id);
+    expect(f.c.getState().post).toBeUndefined();
+    expect(f.c.getState().error).toContain("削除");
+    expect(f.c.getReplyComposer()!.getState().content).toBe("Keep this unsent reply");
+    expect(f.deletes()).toHaveLength(0);
+  } finally { f.c.dispose(); }
+});
+
+test("another controller's deletion invalidates the covered parent conversation and preserves its draft", async () => {
+  const parent = base + "/ap/posts/parent";
+  let deleted = false;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/auth/me") return Response.json({ actor: { ap_id: owner } });
+    if (path === "/api/posts/" + encodeURIComponent(parent) + "/replies")
+      return Response.json({ replies: deleted ? [] : [{ ...wirePost(), in_reply_to: parent }], has_more: false, next_cursor: null });
+    if (path === "/api/posts/" + encodeURIComponent(parent)) return Response.json({ post: { ...wirePost(), ap_id: parent } });
+    if (path === "/api/posts/" + encodeURIComponent(id)) {
+      if (init?.method === "DELETE") { deleted = true;return Response.json({ success: true }); }
+      return deleted ? Response.json({ error: "Post not found" }, { status: 404 }) : Response.json({ post: wirePost() });
+    }
+    throw Error("Unexpected request: " + path);
+  }) as typeof fetch;
+  const root = createNotificationController({ session });
+  const other = createNotificationController({ session, getActorId: () => owner, confirmDeletePost: () => true, onPostDeleted: async (deletedId) => {
+    root.invalidatePost(deletedId);
+  } });
+  try {
+    await root.openPost(parent);await root.reloadReplies();root.getReplyComposer()!.setDraft("Keep parent reply");root.pause();
+    await other.openPost(id);await other.deleteOwnPost();
+    expect(root.getState().replies).toHaveLength(0);
+    expect(root.getState().repliesLoaded).toBe(false);
+    expect(root.getReplyComposer()!.getState().content).toBe("Keep parent reply");
+    await root.reloadReplies();expect(root.getState().replies).toHaveLength(0);
+  } finally { root.dispose();other.dispose(); }
+});
+
+test("confirmed deletion reaches sibling caches before a retiring parent Back read", async () => {
+  const parent = base + "/ap/posts/parent", gate = deferred<Response>();
+  let parentReads = 0, deleted = false, refreshed = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/auth/me") return Response.json({ actor: { ap_id: owner } });
+    if (path === "/api/posts/" + encodeURIComponent(parent) + "/replies")
+      return Response.json({ replies: deleted ? [] : [{ ...wirePost(), in_reply_to: parent }], has_more: false, next_cursor: null });
+    if (path === "/api/posts/" + encodeURIComponent(parent)) {
+      parentReads++;return parentReads > 2 ? gate.promise : Response.json({ post: { ...wirePost(), ap_id: parent } });
+    }
+    if (path === "/api/posts/" + encodeURIComponent(id)) {
+      if (init?.method === "DELETE") { deleted = true;return Response.json({ success: true }); }
+      return deleted ? Response.json({ error: "Post not found" }, { status: 404 }) : Response.json({ post: wirePost() });
+    }
+    throw Error("Unexpected request: " + path);
+  }) as typeof fetch;
+  const root = createNotificationController({ session });
+  const other = createNotificationController({ session, getActorId: () => owner, confirmDeletePost: () => true,
+    onPostDeleteConfirmed: (deletedId: string) => root.invalidatePost(deletedId), onPostDeleted: async () => { refreshed++; },
+  });
+  let pending: Promise<void> | undefined;
+  try {
+    await root.openPost(parent);await root.reloadReplies();root.getReplyComposer()!.setDraft("Keep covered draft");root.pause();
+    await other.openPost(parent);await other.openReply(id);pending = other.deleteOwnPost();
+    const end = Date.now() + 500;while (parentReads < 3 && Date.now() < end) await Bun.sleep(1);
+    expect(parentReads).toBe(3);
+    expect(root.getState().replies).toHaveLength(0);
+    other.pause();gate.resolve(Response.json({ post: { ...wirePost(), ap_id: parent } }));await pending;
+    expect(refreshed).toBe(0);
+    expect(root.getReplyComposer()!.getState().content).toBe("Keep covered draft");
+  } finally { gate.resolve(Response.json({ post: { ...wirePost(), ap_id: parent } }));await pending;root.dispose();other.dispose(); }
+});
