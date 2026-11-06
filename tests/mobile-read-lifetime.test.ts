@@ -311,7 +311,7 @@ test("releasing the mounted home loader cancels its actual in-flight batch", asy
   }
 });
 
-test("a new credential incarnation cancels the old home read and settles its callers with the new revision", async () => {
+test("a new credential incarnation cancels the old HTTP home read without retargeting its caller", async () => {
   let oldHeader!: () => void, oldAbort!: () => void;
   const headers = new Promise<void>((done) => {
     oldHeader = done;
@@ -396,7 +396,8 @@ test("a new credential incarnation cancels the old home read and settles its cal
       throw new Error(
         "new revision did not settle while the old body was held",
       );
-    expect(await settled).toEqual({ value });
+    expect(await settled).toHaveProperty("cause");
+    expect(await settled).not.toHaveProperty("value");
     expect(
       await Promise.race([
         aborted,

@@ -111,38 +111,103 @@ test("overlapping refreshes are serialized and every caller gets the latest home
   release();
 });
 
-test("session rotation clears the prior home immediately and retries with current credentials", async () => {
+test("session rotation starts current credentials independently and rejects the retired caller", async () => {
   const oldRequest = deferred<YurucommuMobileHome>();
   const newRequest = deferred<YurucommuMobileHome>();
-  const newStarted = deferred<void>();
   const requests: string[] = [];
+  let oldSignal: AbortSignal | undefined;
   const nextSession = { ...session, accessToken: "token-two" };
   const snapshots: Array<{ session: MobileSession; home?: YurucommuMobileHome }> = [];
   const loader = createFeedHomeLoader({
-    loadHome: (current) => {
+    loadHome: (current, signal) => {
       requests.push(current.accessToken);
       if (current.accessToken === "token-two") {
-        newStarted.resolve(undefined);
         return newRequest.promise;
       }
+      oldSignal = signal;
       return oldRequest.promise;
     },
   });
   const release = loader.mount({ session, home: home("Prior home") }, (snapshot) => snapshots.push(snapshot));
   const staleCaller = loader.load(session);
+  const staleResult = staleCaller.then(value => ({ value }), cause => ({ cause }));
   await microtask();
   const currentCaller = loader.load(nextSession);
-  expect(snapshots.at(-1)).toEqual({ session: nextSession, home: undefined });
+  try {
+    expect(snapshots.at(-1)).toEqual({ session: nextSession, home: undefined });
+    await microtask();
+    expect(currentCaller).not.toBe(staleCaller);
+    expect(oldSignal?.aborted).toBe(true);
+    expect(requests).toEqual(["token-one", "token-two"]);
+    newRequest.resolve(home("Current token response"));
+    await expect(currentCaller).resolves.toEqual(home("Current token response"));
+    oldRequest.resolve(home("Old token response"));
+    expect(await staleResult).toHaveProperty("cause");
+    expect(snapshots.at(-1)).toEqual({ session: nextSession, home: home("Current token response") });
+    expect(snapshots.some((snapshot) => snapshot.home?.actor.name === "Old token response")).toBe(false);
+  } finally {
+    oldRequest.resolve(home("Old token response"));
+    newRequest.resolve(home("Current token response"));
+    await Promise.allSettled([staleResult, currentCaller]);
+    release();
+  }
+});
 
-  oldRequest.resolve(home("Old token response"));
-  await newStarted.promise;
-  expect(requests).toEqual(["token-one", "token-two"]);
-  newRequest.resolve(home("Current token response"));
-  await expect(staleCaller).resolves.toEqual(home("Current token response"));
-  await expect(currentCaller).resolves.toEqual(home("Current token response"));
-  expect(snapshots.at(-1)).toEqual({ session: nextSession, home: home("Current token response") });
-  expect(snapshots.some((snapshot) => snapshot.home?.actor.name === "Old token response")).toBe(false);
-  release();
+for (const change of ["apiBaseUrl", "productEndpoints"] as const) {
+  test(`${change} replacement starts without waiting for the retired callback`, async () => {
+    const oldRead = deferred<YurucommuMobileHome>(), newRead = deferred<YurucommuMobileHome>();
+    const replacement: MobileSession = change === "apiBaseUrl"
+      ? { ...session, apiBaseUrl: session.hostUrl + "/replacement" }
+      : { ...session, productEndpoints: { timeline: "/replacement/timeline" } };
+    let calls = 0;
+    const loader = createFeedHomeLoader({ loadHome: () => ++calls === 1 ? oldRead.promise : newRead.promise });
+    const release = loader.mount({ session }, () => {});
+    const retired = loader.load(session), outcome = retired.then(value => ({ value }), cause => ({ cause }));
+    await microtask();
+    const current = loader.load(replacement);
+    try {
+      await microtask();
+      expect(calls).toBe(2);
+      expect(current).not.toBe(retired);
+      newRead.resolve(home("Current destination"));
+      await expect(current).resolves.toEqual(home("Current destination"));
+      oldRead.resolve(home("Retired destination"));
+      expect(await outcome).toHaveProperty("cause");
+    } finally {
+      oldRead.resolve(home("Retired destination")); newRead.resolve(home("Current destination"));
+      await Promise.allSettled([outcome, current]); release();
+    }
+  });
+}
+
+test("retired A-B-A completion cannot release the current A pending slot", async () => {
+  const reads = [deferred<YurucommuMobileHome>(), deferred<YurucommuMobileHome>(), deferred<YurucommuMobileHome>()];
+  let calls = 0;
+  const loader = createFeedHomeLoader({ loadHome: () => reads[calls++]?.promise ?? Promise.resolve(home("Latest current A")) });
+  const release = loader.mount({ session }, () => {});
+  const first = loader.load(session), firstResult = first.catch(cause => cause);
+  await microtask();
+  const second = loader.load({ ...session, accessToken: "token-two" }), secondResult = second.catch(cause => cause);
+  await microtask();
+  const current = loader.load(session);
+  let overlap: Promise<YurucommuMobileHome> | undefined;
+  try {
+    await microtask();
+    expect(calls).toBe(3);
+    reads[0]!.resolve(home("Retired first A")); reads[1]!.resolve(home("Retired B"));
+    expect(await firstResult).toBeInstanceOf(Error);
+    expect(await secondResult).toBeInstanceOf(Error);
+    overlap = loader.load(session);
+    expect(overlap).toBe(current);
+    expect(calls).toBe(3);
+    reads[2]!.resolve(home("Superseded current A"));
+    await expect(current).resolves.toEqual(home("Latest current A"));
+    await expect(overlap).resolves.toEqual(home("Latest current A"));
+    expect(calls).toBe(4);
+  } finally {
+    reads.forEach(read => read.resolve(home("Cleanup")));
+    await Promise.allSettled([firstResult, secondResult, current, overlap]); release();
+  }
 });
 
 test("same-session remount ignores an old successful response from the released lifetime", async () => {

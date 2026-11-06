@@ -29,6 +29,10 @@ does not overwrite later edits or an explicit clear. Accepted-send status is sep
 a failed readback never resends the post. Replies from an earlier connection, authentication state or
 sign-in do not affect the current session.
 
+Changing credentials or the API destination cancels the previous home read and starts the current one
+without waiting for that retired callback. Retired callers cannot receive the replacement connection's
+home. Overlapping refreshes within the same connection remain serialized and return the latest requested home.
+
 Feed-first Tauri client for a Yurucommu family server. It can connect through a
 Takosumi install handoff, the product's direct Deploy to Cloudflare flow, a
 trusted QR payload, or a manually entered HTTPS URL.

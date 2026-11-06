@@ -10,8 +10,10 @@ interface Snapshot {
 interface Lifetime extends Snapshot {
   mounted: boolean;
   revision: number;
-  pending?: Promise<YurucommuMobileHome>;
-  read?: AbortController;
+  work?: {
+    pending?: Promise<YurucommuMobileHome>;
+    read?: AbortController;
+  };
   publish?: (snapshot: Snapshot) => void;
 }
 
@@ -54,27 +56,31 @@ export function createFeedHomeLoader(options: {
           };
     const previous = lifetime;
     lifetime = current;
-    if (previous !== current) previous?.read?.abort();
+    if (previous !== current) previous?.work?.read?.abort();
     current.mounted = true;
     current.publish = listener;
     publish(current);
     return () => {
       current.publish = undefined;
       if (live(current)) lifetime = undefined;
-      current.read?.abort();
+      current.work?.read?.abort();
     };
   }
 
-  async function settle(current: Lifetime): Promise<YurucommuMobileHome> {
+  async function settle(
+    current: Lifetime,
+    work: NonNullable<Lifetime["work"]>,
+  ): Promise<YurucommuMobileHome> {
+    const owns = () => live(current) && current.work === work;
     try {
-      while (live(current)) {
+      while (owns()) {
         const revision = current.revision;
         const session = snapshotFeedSession(current.session);
         const read = new AbortController();
-        current.read = read;
+        work.read = read;
         try {
           const home = await options.loadHome(session, read.signal);
-          if (!live(current))
+          if (!owns())
             throw new Error("フィードの接続が変更されました。");
           // Every overlap explicitly requested another refresh. Read once more
           // after the prior request, then settle all shell callers together.
@@ -84,18 +90,20 @@ export function createFeedHomeLoader(options: {
           publish(current);
           return home;
         } catch (cause) {
-          if (!live(current)) throw cause;
+          if (!owns()) throw cause;
           if (revision !== current.revision) continue;
           current.home = undefined;
           publish(current);
           throw cause;
         } finally {
-          if (current.read === read) current.read = undefined;
+          if (work.read === read) work.read = undefined;
         }
       }
       throw new Error("フィードの接続が変更されました。");
     } finally {
-      current.pending = undefined;
+      // A retired scope may settle after a replacement read has begun.
+      // Only the work that owns the current pending slot may release it.
+      if (current.work === work) current.work = undefined;
     }
   }
 
@@ -109,12 +117,16 @@ export function createFeedHomeLoader(options: {
     const changed =
       feedSessionIdentity(current.session) !== feedSessionIdentity(session);
     current.session = snapshotFeedSession(session);
-    if (changed) current.home = undefined;
+    if (changed) {
+      current.home = undefined;
+      current.work?.read?.abort();
+      current.work = undefined;
+    }
     publish(current);
     current.revision += 1;
-    if (changed) current.read?.abort();
-    current.pending ??= Promise.resolve().then(() => settle(current));
-    return current.pending;
+    const work = current.work ??= {};
+    work.pending ??= Promise.resolve().then(() => settle(current, work));
+    return work.pending;
   }
 
   return { load, mount };
