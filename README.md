@@ -50,6 +50,19 @@ OIDC は接続先が `/.well-known/yurucommu` で広告する operator 登録済
   APNs/FCM の配線、ローカルの native toolchain がすべて揃っていることを厳密に確認します
 - `bun run mobile:release-evidence-check` — operator 私有の署名・ストア・実機・OIDC・push の証跡を確認します
 
+組立済みAPKは、Android SDKと`unzip`／`readelf`のある環境で静的検査できます。
+`<build-tools-dir>`には、使用するSDKの`build-tools/<version>`ディレクトリを指定してください。
+
+```sh
+bun run inspect:android-apk -- /path/to/app.apk --build-tools <build-tools-dir>
+```
+
+製品sourceのアプリID・version・起動schemeと、APKのFCM service・非debug設定・署名状態・
+native library・16 KiB alignmentを照合します。署名が必須なら`--require-signed`、
+別のELF読取toolを使うなら`--readelf /path/to/llvm-readelf`を指定できます。
+署名なしは明示して返し、署名付きでも配布者の鍵の確認や実OS／OIDC／Push／storeの資格にはしません。
+APKを署名・install・公開せず、元のnative／release gateも置き換えません。
+
 ## リンク（Takosumi から開く・画面へのリンク）
 
 Takosumi は、このアプリを専用アプリとして開くとき、信頼できる専用アプリの一覧

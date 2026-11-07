@@ -10,6 +10,7 @@
     "dev:web": "bun run dev",
     "build": "bunx vite build --config vite.config.ts",
     "build:web": "bun run build",
+    "inspect:android-apk": "bun scripts/inspect-android-apk.mjs",
     "check": "bun run fmt:check && bun run lint && bun run test && bun run build",
     "fmt:check": "bun ../mobile-kit/scripts/check-source-format.mjs",
     "lint": "bun run typecheck",
