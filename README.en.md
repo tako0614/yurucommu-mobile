@@ -223,3 +223,15 @@ connection/account change retires the previous continuation. Confirmed edits and
 deletions also project into added pages. Legacy responses without continuation
 metadata remain readable but do not establish either a next page or the end.
 These are source/local behaviors, separate from device and deployed use.
+
+## Search in the app
+
+Use the feed's search action to find posts and users through the connected server's existing search APIs.
+Typing does not make requests; submit the query explicitly. `#tag` uses the existing exact-tag endpoint.
+Open a result's post or profile and return without losing the query, results, pagination position, or home composer draft.
+Failures remain visible and can be retried explicitly for the original query or page, preserving newer unsent input.
+The app accepts the web client's `/search?search=<query>&tab=posts` and `tab=users` links.
+Without a tab it checks both result types, selecting users when found and posts otherwise, as the web client does.
+Community tabs remain unsupported. Search does not add remote delivery or WebFinger lookups.
+Changing account or API endpoint retires pending reads and clears the prior account's query and results.
+Source/local search checks do not qualify real-device login, deployment, or distribution.

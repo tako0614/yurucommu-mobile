@@ -24,6 +24,7 @@ export type NativeNotificationRoute =
   | { readonly page: "home" }
   | { readonly page: "notifications" }
   | { readonly page: "post"; readonly apId: string }
+  | { readonly page: "search"; readonly query: string; readonly kind: "posts" | "actors" | "auto" }
   | { readonly page: "profile"; readonly identifier: string | null };
 
 export interface NativeNotificationRouteRequest {
@@ -75,6 +76,19 @@ export function createHostRouteHandoff(
       onNativeRoute({ session, target: { page: "notifications" } });
       onNotice(undefined);
       return;
+    }
+    if (onNativeRoute && path === "/search") {
+      const tab = target.searchParams.get("tab");
+      // The web client calls the actor tab "users". Unknown tabs stay
+      // unsupported instead of silently running a different query.
+      if (target.searchParams.getAll("tab").length <= 1 && target.searchParams.getAll("search").length <= 1 &&
+        (tab === null || tab === "posts" || tab === "users")) {
+        onNativeRoute({ session, target: { page: "search",
+          query: target.searchParams.get("search") ?? "",
+          kind: tab === "users" ? "actors" : tab === "posts" ? "posts" : "auto" } });
+        onNotice(undefined);
+        return;
+      }
     }
     if (
       onNativeRoute &&
