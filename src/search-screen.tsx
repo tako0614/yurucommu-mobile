@@ -2,6 +2,7 @@ import { createRenderEffect, createUniqueId, For, Show } from "solid-js";
 import type { MobileSession } from "@takosjp/mobile-kit";
 import { MobilePreviewCard, MobilePreviewList, MobilePreviewSection } from "@takosjp/mobile-kit/solid";
 import { PostContent } from "./post-content.tsx";
+import { postText } from "./post-text.ts";
 import type { createSearchController, MobileSearchState } from "./search-controller.ts";
 
 export function SearchScreen(props: {
@@ -51,7 +52,7 @@ export function SearchScreen(props: {
                     onClick={event => props.onOpenProfile(post.author.ap_id, event.currentTarget)}>
                     {post.author.name || post.author.preferred_username || post.author.ap_id}
                   </button>
-                  <PostContent session={props.session} post={post} isActive={() => props.visible && props.isActive()} />
+                  <PostContent session={props.session} post={post} renderText={postText} isActive={() => props.visible && props.isActive()} />
                   <button type="button" class="text-button" data-post-id={post.ap_id} data-post-surface="search"
                     aria-label={`${post.author.name || post.author.preferred_username || "投稿者"}の投稿を開く`}
                     onClick={event => props.onOpenPost(post.ap_id, event.currentTarget)}>投稿を開く</button>

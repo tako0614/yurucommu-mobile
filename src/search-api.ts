@@ -1,6 +1,6 @@
 import type { MobileSession } from "@takosjp/mobile-kit";
 import { normalizeActor, type Actor } from "@takosjp/yurucommu-api";
-import { readMobileResponseJson, withMobileReadScope } from "./api.ts";
+import { readMobileResponseJson, recordMobilePostLikeRead, withMobileReadScope } from "./api.ts";
 import { snapshotFeedSession } from "./feed-session.ts";
 import {
   decodeMobileNotificationPost,
@@ -75,6 +75,7 @@ export async function loadMobileSearch(
     const path = hashtag
       ? `/api/search/hashtag/${encodeURIComponent(term.slice(1))}`
       : `/api/search/${kind}`;
+    const startedAt = performance.now();
     const response = await request(`${path}?${params}`);
     if (!response.ok) throw Error(`検索できませんでした（${response.status}）。`);
     const value = await readMobileResponseJson(response, 2 * 1024 * 1024, "検索");
@@ -86,7 +87,7 @@ export async function loadMobileSearch(
     if (rows.length > 20 || (value.has_more && !rows.length))
       throw Error("検索結果の続きの位置を確認できませんでした。");
     return {
-      posts: kind === "posts" ? rows.map(decodeMobileNotificationPost) : [],
+      posts: kind === "posts" ? rows.map(row => recordMobilePostLikeRead(decodeMobileNotificationPost(row), selected, startedAt)) : [],
       actors: kind === "actors" ? rows.map((row) => {
         if (!record(row) || !validMobileActorApId(row.ap_id) ||
           !nullable(row.preferred_username) || !nullable(row.name) ||

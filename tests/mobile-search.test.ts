@@ -227,3 +227,36 @@ test("real loopback HTTP uses the same search API and refuses redirects", async 
   await expect(loadMobileSearch(selected, "redirect", "posts")).rejects.toThrow();
   expect(requests).toEqual([{ path: "/api/search/posts", auth: "Bearer synthetic-search" }, { path: "/api/search/posts", auth: "Bearer synthetic-search" }]);
 });
+test("fresh search supersedes a confirmed edit while a pre-edit search cannot roll it back", async () => {
+  const { loadMobileEditablePost, saveMobilePostEdit } = await import("../src/post-edit-api.ts");
+  const { createPostEditStore } = await import("../src/post-edit-store.ts");
+  const owner = session.hostUrl + "/ap/users/owner", id = session.hostUrl + "/ap/posts/one";
+  let content = "Original body", holdNextSearch = true, release!: (response: Response) => void, patches = 0;
+  const wire = () => post(id, { content, edited_at: null, author: { ...actor(), ap_id: owner } });
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input)); expect(url.origin).toBe(session.hostUrl);
+    if (url.pathname === "/api/auth/me") return Response.json({ actor: { ap_id: owner } });
+    if (url.pathname === "/api/search/posts") {
+      if (holdNextSearch) { holdNextSearch = false; return new Promise<Response>(done => { release = done; }); }
+      return page([wire()]);
+    }
+    expect(url.pathname).toBe("/api/posts/" + encodeURIComponent(id));
+    if (init?.method === "PATCH") {
+      patches++; content = JSON.parse(String(init.body)).content;
+      return Response.json({ success: true, post: { ap_id: id, content, summary: null } });
+    }
+    return Response.json({ post: wire() });
+  }) as typeof fetch;
+  const store = createPostEditStore({ session }); cleanups.push(() => store.clear());
+  const before = await loadMobileEditablePost(session, id, owner), oldWire = wire();
+  const held = loadMobileSearch(session, "body", "posts");
+  const receipt = await saveMobilePostEdit(session, before, { content: "Confirmed app edit" });
+  expect(store.record(receipt)).toBe(true);
+  release(page([oldWire]));
+  expect(store.project((await held).posts[0]!).content).toBe("Confirmed app edit");
+  content = "Changed by another legitimate client";
+  await Bun.sleep(1);
+  const fresh = (await loadMobileSearch(session, "body", "posts")).posts[0]!;
+  expect(store.project(fresh).content).toBe("Changed by another legitimate client");
+  expect(patches).toBe(1);
+});
