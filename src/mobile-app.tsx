@@ -39,6 +39,8 @@ import { createPostLikeStore } from "./post-like-controller.ts";
 import { createNotificationController } from "./notification-controller.ts";
 import { NotificationScreen } from "./notification-screen.tsx";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
+import { createSearchController } from "./search-controller.ts";
+import { SearchScreen } from "./search-screen.tsx";
 
 const metrics = [
   { label: "投稿", value: (home) => home?.posts.length },
@@ -118,6 +120,7 @@ export function createYurucommuMobileApp(
         const forgetHomePost = (id: string) => {
           deletedPostIds.add(id);
           setHome((value) => withoutDeletedPosts(value));
+          search.applyPostEdits();
         };
         const [session, setSession] = createSignal(context.session);
         const [actions, setActions] = createSignal(context);
@@ -125,8 +128,19 @@ export function createYurucommuMobileApp(
         const edits = createPostEditStore({ session: context.session, onChange: () => setEditRevision(value => value + 1) });
         createRenderEffect(() => edits.updateSession(session()));
         onCleanup(() => edits.clear());
+        const [searchRevision, setSearchRevision] = createSignal(0);
+        const search = createSearchController({
+          session: context.session,
+          isActive: () => current.active,
+          onChange: () => setSearchRevision(value => value + 1),
+          projectPosts: posts => posts.filter(post => !deletedPostIds.has(post.ap_id)).map(post => edits.project(post)),
+        });
+        const searchState = () => { searchRevision(); return search.getState(); };
+        createRenderEffect(() => search.updateSession(session()));
+        onCleanup(() => search.dispose());
         function applyPostEdits() {
           profiles.applyPostEdits();notifications.applyPostEdits();
+          search.applyPostEdits();
           setHome((value) => withoutDeletedPosts(value));
         }
         const likes = createPostLikeStore({
@@ -252,6 +266,19 @@ export function createYurucommuMobileApp(
           restoreProfileFocus();
         };
         let homeRoot: HTMLDivElement | undefined;
+        let searchRoot: HTMLDivElement | undefined;
+        let searchTrigger: HTMLButtonElement | undefined;
+        const focusSearch = () => queueMicrotask(() => {
+          if (current.active && searchState().visible && !profileState().visible && notificationState().page === "home")
+            searchRoot?.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+        });
+        const closeSearch = () => {
+          search.close();
+          queueMicrotask(() => {
+            if (current.active && !searchState().visible && notificationState().page === "home" && !profileState().visible)
+              searchTrigger?.focus();
+          });
+        };
         let postOrigin:
           | {
               trigger: HTMLButtonElement;
@@ -264,7 +291,7 @@ export function createYurucommuMobileApp(
           if (!current.active) return;
           postOrigin = {
             trigger,
-            sessionKey: feedSessionIdentity(session()),
+            sessionKey: profileFocusScope(),
             id,
             surface: trigger.dataset.postSurface,
           };
@@ -276,23 +303,24 @@ export function createYurucommuMobileApp(
           if (
             !origin ||
             !current.active ||
-            feedSessionIdentity(session()) !== origin.sessionKey
+            profileFocusScope() !== origin.sessionKey
           )
             return;
           if (origin.trigger.isConnected && !origin.trigger.closest("[hidden]"))
             return origin.trigger;
           // A refresh can replace card nodes while detail is open. Resolve the
           // equivalent card within this view using values, never a dynamic selector.
+          const root = origin.surface === "search" ? searchRoot : homeRoot;
           return (
             Array.from(
-              homeRoot?.querySelectorAll<HTMLButtonElement>(
+              root?.querySelectorAll<HTMLButtonElement>(
                 "button[data-post-id]",
               ) ?? [],
             ).find(
               (button) =>
                 button.dataset.postId === origin.id &&
                 button.dataset.postSurface === origin.surface,
-            ) ?? homeRoot
+            ) ?? root
           );
         };
         createRenderEffect(() => {
@@ -310,6 +338,15 @@ export function createYurucommuMobileApp(
           )
             return;
           adoptedRoute = request;
+          if (request.target.page === "search") {
+            profiles.close();
+            profileOrigin = undefined;
+            notifications.showHome();
+            search.open(request.target.query, request.target.kind);
+            focusSearch();
+            return;
+          }
+          search.close();
           if (request.target.page === "profile") {
             void openProfile(request.target.identifier);
             return;
@@ -373,13 +410,23 @@ export function createYurucommuMobileApp(
                 homeFocus={homeFocus}
                 likes={likes}
               />
+              <div ref={searchRoot} tabIndex={-1}>
+                <SearchScreen
+                  session={session()} state={searchState()} controller={search}
+                  visible={searchState().visible && notificationState().page === "home" && !profileState().visible}
+                  isActive={() => current.active} onClose={closeSearch}
+                  onOpenPost={openPost} onOpenProfile={openProfile}
+                />
+              </div>
               <div
                 ref={homeRoot}
                 tabIndex={-1}
                 role="region"
                 aria-label="フィードと保存した投稿"
-                hidden={notificationState().page !== "home"}
+                hidden={notificationState().page !== "home" || searchState().visible}
               >
+                <button ref={searchTrigger} type="button" class="text-button"
+                  onClick={() => { search.open(); focusSearch(); }}>投稿・ユーザーを検索</button>
                 <Feed
                   home={home()}
                   projectPosts={projectHomePosts}
@@ -388,7 +435,7 @@ export function createYurucommuMobileApp(
                   likes={likes}
                   likeActionsActive={() =>
                     notificationState().page === "home" &&
-                    !profileState().visible
+                    !profileState().visible && !searchState().visible
                   }
                   isActive={() => current.active}
                   onOpenPost={openPost}
@@ -400,7 +447,7 @@ export function createYurucommuMobileApp(
                   likes={likes}
                   likeActionsActive={() =>
                     notificationState().page === "home" &&
-                    !profileState().visible
+                    !profileState().visible && !searchState().visible
                   }
                   revision={bookmarkRevision()}
                   session={session()}

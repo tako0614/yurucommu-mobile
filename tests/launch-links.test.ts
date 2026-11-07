@@ -14,6 +14,41 @@ import {
   type NativeNotificationRouteRequest,
 } from "../src/host-route.ts";
 
+test("canonical web search links select a native query and result tab", async () => {
+  for (const [tab, kind] of [["posts", "posts"], ["users", "actors"]] as const) {
+    const targets: NativeNotificationRouteRequest["target"][] = [];
+    const notices: (HostRouteNotice | undefined)[] = [];
+    const session: MobileSession = { product: "yurucommu", hostUrl: "https://search.fixture.test",
+      accessToken: "local-route-fixture", tokenType: "Bearer", createdAt: "2026-11-07T00:00:00Z" };
+    const handoff = createHostRouteHandoff(n => notices.push(n), r => targets.push(r.target));
+    const path = `/search?${new URLSearchParams({ search: "ねこ & +", tab })}`;
+    await handoff({ session, path, url: session.hostUrl + path });
+    expect(targets).toEqual([{ page: "search", query: "ねこ & +", kind }]);
+    expect(notices).toEqual([undefined]);
+  }
+});
+test("tabless web mention links retain automatic result selection", async () => {
+  const session: MobileSession = { product: "yurucommu", hostUrl: "https://search.fixture.test",
+    accessToken: "local-route-fixture", tokenType: "Bearer", createdAt: "2026-11-07T00:00:00Z" };
+  let target: NativeNotificationRouteRequest["target"] | undefined;
+  const handoff = createHostRouteHandoff(() => {}, r => { target = r.target; });
+  const path = "/search?search=%40alice";
+  await handoff({ session, path, url: session.hostUrl + path });
+  expect(target).toEqual({ page: "search", query: "@alice", kind: "auto" });
+});
+test("empty native search opens without inventing a query; unsupported and ambiguous tabs remain notices", async () => {
+  const session: MobileSession = { product: "yurucommu", hostUrl: "https://search.fixture.test",
+    accessToken: "local-route-fixture", tokenType: "Bearer", createdAt: "2026-11-07T00:00:00Z" };
+  let target: NativeNotificationRouteRequest["target"] | undefined, notice: HostRouteNotice | undefined;
+  const handoff = createHostRouteHandoff(n => { notice = n; }, r => { target = r.target; });
+  await handoff({ session, path: "/search", url: session.hostUrl + "/search" });
+  expect(target).toEqual({ page: "search", query: "", kind: "auto" }); expect(notice).toBeUndefined();
+  for (const path of ["/search?search=cats&tab=communities", "/search?search=A&search=B", "/search?tab=posts&tab=users"]) {
+    await handoff({ session, path, url: session.hostUrl + path });
+    expect(target).toEqual({ page: "home" }); expect(notice).toEqual({ hostUrl: session.hostUrl, path: "/search" });
+  }
+});
+
 // TASK-0119 step 5: what Takosumi sends and what this app does with it.
 // Takosumi fills the trusted templates for this app (scheme `yurucommu`,
 // package/bundle `com.yurucommu`) with the screen URL's origin, URL-encoded:
