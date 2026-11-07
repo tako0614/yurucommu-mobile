@@ -28,6 +28,7 @@ import { createFeedTimelineController, type FeedTimelineState } from "./feed-tim
 import { PostComposer } from "./post-composer.tsx";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 import { PostContent } from "./post-content.tsx";
+import { postText } from "./post-text.ts";
 import { PostLike } from "./post-like.tsx";
 import type { PostLikeStore } from "./post-like-controller.ts";
 import type { PostEditStore } from "./post-edit-store.ts";
@@ -168,6 +169,7 @@ export function Feed(props: {
                       </div>
                       <PostContent
                         post={post}
+                        renderText={postText}
                         session={props.session}
                         isActive={() =>
                           props.isActive?.() !== false &&
@@ -345,6 +347,7 @@ export function BookmarksPreview(props: {
                       </button>
                       <PostContent
                         post={post}
+                        renderText={postText}
                         session={props.session}
                         isActive={() =>
                           props.isActive?.() !== false &&
