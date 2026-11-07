@@ -44,6 +44,29 @@ OIDC は接続先が `/.well-known/yurucommu` で広告する operator 登録済
 
 この Tauri shell は iOS / Android 専用です。desktop では Yurucommu web client を使ってください。
 
+### Androidをコマンドから起動する
+
+Android SDK/NDK、RustのAndroid target、生成済みAndroid projectと、接続済み実機または
+起動済みemulatorを用意した環境では、Android Studioを開かずに起動できます。
+`<device-name>`にはTauriが検出する端末名を指定します。省略するとCLIで起動先を選びます。
+
+```sh
+bun run tauri:android:dev "<device-name>"
+```
+
+実機から開発サーバーへLAN経由で接続する場合は、到達可能な開発ホストのIPを明示します。
+`--host`は端末名に続けて指定でき、共通Vite設定へ`TAURI_DEV_HOST`として渡されます。
+
+```sh
+bun run tauri:android:dev "<device-name>" --host "<dev-host-ip>"
+```
+
+Android Studioで操作したい場合だけ、`--open`を追加してください。
+
+```sh
+bun run tauri:android:dev --open --host "<dev-host-ip>"
+```
+
 ## リリースチェック
 
 - `bun run mobile:native-release-check` — Android/iOS の生成プロジェクト、製品所有の secure keystore と
