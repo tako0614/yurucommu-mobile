@@ -58,6 +58,20 @@ projects, product-owned secure keystore and APNs/FCM wiring, and local native
 toolchains must all be present. `bun run mobile:release-evidence-check` verifies
 the operator-private signing, store, device, OIDC, and push evidence.
 
+An assembled APK can be inspected on a host with Android SDK build tools,
+`unzip`, and `readelf`. Select the SDK's `build-tools/<version>` directory:
+
+```sh
+bun run inspect:android-apk -- /path/to/app.apk --build-tools <build-tools-dir>
+```
+
+The command compares the product's source identity, version, and deep-link schemes
+with the APK, and checks its FCM service, non-debug configuration, signature state,
+native libraries, and 16 KiB alignment. Use `--require-signed` to reject unsigned
+APKs, or `--readelf /path/to/llvm-readelf` to select an ELF reader. A valid signature
+does not establish the publisher's signing identity. This command does not sign,
+install, or publish the APK and does not replace the native/device/release gates.
+
 ### Links (opening from Takosumi, screen links)
 
 When Takosumi opens this app as a screen's native client, it fills the trusted
