@@ -53,6 +53,30 @@ advertised by the connected host and requests only `openid profile`.
 This Tauri shell ships for iOS and Android only. Use the Yurucommu web client
 on desktop.
 
+### Run Android from the command line
+
+With Android SDK/NDK, a Rust Android target, a generated Android project, and a
+connected device or running emulator, start the app without opening Android Studio.
+Use the device name detected by Tauri, or omit it to choose a target in the CLI.
+
+```sh
+bun run tauri:android:dev "<device-name>"
+```
+
+For a physical device reaching the development server over the LAN, explicitly
+provide the reachable development host IP. `--host` can follow the device name;
+Tauri passes it to the shared Vite configuration as `TAURI_DEV_HOST`.
+
+```sh
+bun run tauri:android:dev "<device-name>" --host "<dev-host-ip>"
+```
+
+Add `--open` only when you want to use Android Studio:
+
+```sh
+bun run tauri:android:dev --open --host "<dev-host-ip>"
+```
+
 `bun run mobile:native-release-check` remains strict: Android/iOS generated
 projects, product-owned secure keystore and APNs/FCM wiring, and local native
 toolchains must all be present. `bun run mobile:release-evidence-check` verifies
