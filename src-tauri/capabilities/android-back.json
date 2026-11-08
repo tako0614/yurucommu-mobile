@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "android-back",
+  "description": "Yurucommu in-app Android Back navigation",
+  "windows": ["main"],
+  "platforms": ["android"],
+  "permissions": [
+    "core:app:allow-register-listener",
+    "core:app:allow-remove-listener"
+  ]
+}

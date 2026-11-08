@@ -1,4 +1,4 @@
-import { createEffect, For, on, Show } from "solid-js";
+import { createEffect, For, on, onCleanup, Show } from "solid-js";
 import { formatMobilePreviewDate } from "@takosjp/mobile-kit";
 import type { MobileSession } from "@takosjp/mobile-kit";
 import { PostContent } from "./post-content.tsx";
@@ -8,6 +8,7 @@ import { PostLike } from "./post-like.tsx";
 import type { PostLikeStore } from "./post-like-controller.ts";
 import { PostComposer } from "./post-composer.tsx";
 import { PostEditor } from "./post-editor.tsx";
+import type { RegisterBackAction } from "./android-back-navigation.ts";
 import {
   MobilePreviewCard,
   MobilePreviewList,
@@ -36,10 +37,27 @@ export function NotificationScreen(props: {
   homeFocus?: () => HTMLElement | undefined;
   likes: PostLikeStore;
   onOpenProfile: (identifier: string, trigger: HTMLButtonElement) => void;
+  registerBackAction?: RegisterBackAction;
 }) {
   let heading: HTMLHeadingElement | undefined;
   let openButton: HTMLButtonElement | undefined;
   let editButton: HTMLButtonElement | undefined;
+  const closeEditor = () => {
+    const id = props.state.post?.ap_id, session = props.session;
+    props.controller.getPostEditor()?.hide();
+    queueMicrotask(() => {
+      if (props.session === session && props.state.post?.ap_id === id && props.isActive?.() !== false && editButton?.isConnected)
+        editButton.focus();
+    });
+  };
+  const releaseBack = props.registerBackAction?.(() => {
+    if (props.state.postEdit?.visible) {
+      if (!props.state.postEdit.saving) closeEditor();
+      return;
+    }
+    return props.controller.back();
+  });
+  onCleanup(() => releaseBack?.());
   createEffect(
     on(
       () => [props.state.post?.ap_id, props.state.repliesLoaded, props.isActive?.() !== false] as const,
@@ -90,6 +108,7 @@ export function NotificationScreen(props: {
           <button
             type="button"
             class="text-button"
+            disabled={props.state.postEdit?.visible}
             onClick={() => void props.controller.back()}
           >
             {props.state.page === "post" ? "戻る" : "フィードへ戻る"}
@@ -315,13 +334,7 @@ export function NotificationScreen(props: {
                 </Show>
               </MobilePreviewCard>
               <Show when={props.state.postEdit?.visible ? props.state.postEdit : undefined}>
-                {(edit) => <PostEditor state={edit()} controller={props.controller.getPostEditor()!} onClose={() => {
-                  const id = props.state.post?.ap_id, session = props.session;
-                  props.controller.getPostEditor()?.hide();
-                  queueMicrotask(() => {
-                    if (props.session === session && props.state.post?.ap_id === id && props.isActive?.() !== false && editButton?.isConnected) editButton.focus();
-                  });
-                }} />}
+                {(edit) => <PostEditor state={edit()} controller={props.controller.getPostEditor()!} onClose={closeEditor} />}
               </Show>
               <Show when={!props.state.postEdit?.visible && (props.state.postEdit?.dirty || props.state.postEdit?.uncertain)}>
                 <p>未保存または未確認の投稿編集があります。編集ボタンから続けてください。</p>

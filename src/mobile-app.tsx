@@ -5,11 +5,13 @@ import {
   createSignal,
   getOwner,
   onCleanup,
+  Show,
   type JSX,
 } from "solid-js";
 import type { NativeBridge } from "@takosjp/mobile-kit";
 import { confirmMobileAction } from "@takosjp/mobile-kit";
 import {
+  MobileClientApp,
   type MobileClientAppProps,
   type MobileShellHomeExtraContext,
   type MobileShellMetric,
@@ -41,6 +43,12 @@ import { NotificationScreen } from "./notification-screen.tsx";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
 import { createSearchController } from "./search-controller.ts";
 import { SearchScreen } from "./search-screen.tsx";
+import {
+  createAndroidBackNavigation,
+  createBackActionSlot,
+  type AndroidBackFailure,
+  type AndroidBackRegistrar,
+} from "./android-back-navigation.ts";
 
 const metrics = [
   { label: "投稿", value: (home) => home?.posts.length },
@@ -58,10 +66,27 @@ const metrics = [
   },
 ] satisfies readonly MobileShellMetric<YurucommuMobileHome>[];
 
+export function YurucommuMobileApp(props: {
+  createNativeBridge: () => NativeBridge;
+  registerAndroidBack?: AndroidBackRegistrar;
+}) {
+  const app = createYurucommuMobileApp(props.createNativeBridge, props.registerAndroidBack);
+  onCleanup(() => { void app.disposeAndroidBack(); });
+  return <><app.BackRecovery /><MobileClientApp {...app} /></>;
+}
+
 export function createYurucommuMobileApp(
   createNativeBridge: () => NativeBridge,
-): MobileClientAppProps<YurucommuMobileHome> {
+  registerAndroidBack?: AndroidBackRegistrar,
+): MobileClientAppProps<YurucommuMobileHome> & {
+  BackRecovery: () => JSX.Element;
+  disposeAndroidBack: () => Promise<void>;
+} {
   const loader = createFeedHomeLoader({ loadHome });
+  const [backFailure, setBackFailure] = createSignal<AndroidBackFailure>();
+  const androidBack = registerAndroidBack
+    ? createAndroidBackNavigation({ register: registerAndroidBack, onFailure: setBackFailure })
+    : undefined;
   // Screen links and notification taps stay in this native account.
   // Unsupported routes are reported without opening an unauthenticated browser.
   const [routeNotice, setRouteNotice] = createSignal<HostRouteNotice>();
@@ -327,6 +352,26 @@ export function createYurucommuMobileApp(
           if (notificationState().page === "notifications")
             postOrigin = undefined;
         });
+        const profileBack = createBackActionSlot();
+        const notificationBack = createBackActionSlot();
+        const goBack = async () => {
+          if (profileState().visible) return profileBack.run();
+          if (notificationState().page !== "home") return notificationBack.run();
+          if (searchState().visible) closeSearch();
+        };
+        createRenderEffect(() => {
+          const visible = profileState().visible ||
+            notificationState().page !== "home" || searchState().visible;
+          if (visible) {
+            void androidBack?.setTarget({
+              owner: current,
+              scope: profileFocusScope(),
+              isActive: () => current.active,
+              back: goBack,
+            });
+          } else void androidBack?.clear(current);
+        });
+        onCleanup(() => { void androidBack?.clear(current); });
         let adoptedRoute: NativeNotificationRouteRequest | undefined;
         createRenderEffect(() => {
           const request = requestedRoute();
@@ -399,6 +444,7 @@ export function createYurucommuMobileApp(
               isActive={() => current.active}
               onClose={closeProfile}
               onOpenProfile={openProfile}
+              registerBackAction={profileBack.register}
             />
             <div ref={mainRoot} tabIndex={-1} hidden={profileState().visible}>
               <NotificationScreen
@@ -409,6 +455,7 @@ export function createYurucommuMobileApp(
                 isActive={() => current.active && !profileState().visible}
                 homeFocus={homeFocus}
                 likes={likes}
+                registerBackAction={notificationBack.register}
               />
               <div ref={searchRoot} tabIndex={-1}>
                 <SearchScreen
@@ -479,6 +526,17 @@ export function createYurucommuMobileApp(
   }
 
   return {
+    // Remains mounted across sign-out: a failed native removal must stay
+    // recoverable even after the account-owned feed view has been retired.
+    BackRecovery: () => <Show when={backFailure()}>
+      <div role="alert">
+        <p>Androidの戻る操作を更新できませんでした。画面内の「戻る」を使い、再接続を試してください。</p>
+        <button type="button" class="text-button" onClick={() => void androidBack?.retry()}>
+          Androidの戻る操作を再接続
+        </button>
+      </div>
+    </Show>,
+    disposeAndroidBack: () => androidBack?.dispose() ?? Promise.resolve(),
     adapter: productAdapter,
     createNativeBridge,
     loadHome: loader.load,

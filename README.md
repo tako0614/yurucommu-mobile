@@ -44,6 +44,13 @@ OIDC は接続先が `/.well-known/yurucommu` で広告する operator 登録済
 
 この Tauri shell は iOS / Android 専用です。desktop では Yurucommu web client を使ってください。
 
+Androidの「戻る」は、表示中のプロフィール・編集画面・投稿・通知・検索で、画面内の
+戻る操作と同じ処理を使います。入力中の下書きや検索語を保持し、保存処理中は編集画面を
+閉じません。ホームではアプリの戻るlistenerを解除してOS標準の操作へ戻します。
+接続・解除に失敗した場合は画面内に表示し、「Androidの戻る操作を再接続」から明示的に
+再試行できます。解除が成功するまではOS標準の戻る操作の復帰を保証できません。
+この動作のsource/portable検証と、実機でのキー・ジェスチャー操作の検証は別に扱います。
+
 ### Androidをコマンドから起動する
 
 Android SDK/NDK、RustのAndroid target、生成済みAndroid projectと、接続済み実機または

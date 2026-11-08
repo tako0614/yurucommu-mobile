@@ -53,6 +53,14 @@ advertised by the connected host and requests only `openid profile`.
 This Tauri shell ships for iOS and Android only. Use the Yurucommu web client
 on desktop.
 
+Android Back uses the same action as the visible profile, editor, post,
+notification, or search screen. Drafts and search text are retained; an editor
+cannot close while saving. At the feed root, the app removes its Back listener
+to restore the OS default. Registration or removal failures appear in the app
+with an explicit reconnect action. Default OS Back is not guaranteed until
+listener removal succeeds. Source/portable checks do not replace device tests
+of the physical key or Back gesture.
+
 ### Run Android from the command line
 
 With Android SDK/NDK, a Rust Android target, a generated Android project, and a

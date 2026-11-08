@@ -1,4 +1,4 @@
-import { createEffect, createRenderEffect, For, on, Show } from "solid-js";
+import { createEffect, createRenderEffect, For, on, onCleanup, Show } from "solid-js";
 import type { MobileSession } from "@takosjp/mobile-kit";
 import { formatMobilePreviewDate } from "@takosjp/mobile-kit";
 import {
@@ -13,6 +13,7 @@ import { PostMedia } from "./post-media.tsx";
 import { PostContent } from "./post-content.tsx";
 import { ProfileEdit } from "./profile-edit.tsx";
 import { PostLike } from "./post-like.tsx";
+import { createBackActionSlot, type RegisterBackAction } from "./android-back-navigation.ts";
 export function ProfileScreen(props: {
   session: MobileSession;
   controller: ReturnType<typeof createProfileController>;
@@ -21,6 +22,7 @@ export function ProfileScreen(props: {
   isActive?: () => boolean;
   onClose: () => void;
   onOpenProfile: (identifier: string, trigger: HTMLButtonElement) => void;
+  registerBackAction?: RegisterBackAction;
 }) {
   const state = () => {
     props.revision;
@@ -45,6 +47,21 @@ export function ProfileScreen(props: {
   };
   const editState = () => editor().getState();
   let editTrigger: HTMLButtonElement | undefined;
+  const postBack = createBackActionSlot();
+  const closeEditor = () => {
+    if (editState().saving) return;
+    editor().close();
+    queueMicrotask(() => {
+      if (state().visible && !editState().visible && props.isActive?.() !== false && editTrigger?.isConnected)
+        editTrigger.focus();
+    });
+  };
+  const releaseBack = props.registerBackAction?.(() => {
+    if (editState().visible) return closeEditor();
+    if (postState().page !== "home") return postBack.run();
+    return props.onClose();
+  });
+  onCleanup(() => releaseBack?.());
   createRenderEffect(() =>
     props.controller.setFollowActive(
       state().visible &&
@@ -134,7 +151,9 @@ export function ProfileScreen(props: {
       <MobilePreviewSection
         title="プロフィール"
         actions={
-          <button type="button" class="text-button" onClick={props.onClose}>
+          <button type="button" class="text-button"
+            disabled={editState().visible || postState().postEdit?.visible}
+            onClick={props.onClose}>
             元の画面へ戻る
           </button>
         }
@@ -166,18 +185,7 @@ export function ProfileScreen(props: {
           revision={props.revision}
           session={props.session}
           isActive={() => state().visible && props.isActive?.() !== false}
-          onBack={() => {
-            editor().close();
-            queueMicrotask(() => {
-              if (
-                state().visible &&
-                !editState().visible &&
-                props.isActive?.() !== false &&
-                editTrigger?.isConnected
-              )
-                editTrigger.focus();
-            });
-          }}
+          onBack={closeEditor}
         />
         <Show
           when={
@@ -198,6 +206,7 @@ export function ProfileScreen(props: {
                 isActive={() => state().visible && props.isActive?.() !== false}
                 onOpenProfile={props.onOpenProfile}
                 homeFocus={() => heading}
+                registerBackAction={postBack.register}
               />
             }
           >
