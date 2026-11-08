@@ -229,3 +229,29 @@ test("a temporarily inactive view cannot consume a native callback", async () =>
   expect(backs).toBe(1);
   await f.navigation.dispose();
 });
+
+for (const retire of ["clear", "dispose"] as const) test(`a late registration rejection cannot publish an error after ${retire}`, async () => {
+  let reject!: (error: Error) => void;
+  const pending = new Promise<AndroidBackRelease>((_, no) => { reject = no; });
+  const failures: (AndroidBackFailure | undefined)[] = [];
+  const navigation = createAndroidBackNavigation({ register: () => pending, onFailure: value => { failures.push(value); } });
+  const owner = {};
+  const opening = navigation.setTarget({ owner, scope: "A", isActive: () => true, back() {} });
+  await tick();
+  const closing = retire === "clear" ? navigation.clear(owner) : navigation.dispose();
+  reject(Error("retired registration failed")); await opening; await closing;
+  expect(failures).not.toContain("register");
+  expect(failures.at(-1)).toBeUndefined();
+});
+
+test("a registration error clears at the root only when no native lease remains", async () => {
+  let attempts = 0;
+  const failures: (AndroidBackFailure | undefined)[] = [];
+  const navigation = createAndroidBackNavigation({ async register() { attempts++; throw Error("registration refused"); },
+    onFailure: value => { failures.push(value); } });
+  const owner = {};
+  await navigation.setTarget({ owner, scope: "A", isActive: () => true, back() {} });
+  expect(failures.at(-1)).toBe("register");
+  await navigation.clear(owner); expect(failures.at(-1)).toBeUndefined();
+  await navigation.retry(); expect(attempts).toBe(1);
+});

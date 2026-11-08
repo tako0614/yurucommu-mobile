@@ -54,7 +54,13 @@ export function createAndroidBackNavigation(options: {
         }
         continue;
       }
-      if (disposed || !target || lease || attempted === generation) return;
+      if (disposed || !target) {
+        // With no native handle left, a retired view has no registration
+        // failure to recover. Removal failures return above and stay visible.
+        options.onFailure(undefined);
+        return;
+      }
+      if (lease || attempted === generation) return;
       const owner = generation;
       attempted = owner;
       let release: AndroidBackRelease | undefined;
@@ -76,7 +82,7 @@ export function createAndroidBackNavigation(options: {
           });
         });
       } catch {
-        options.onFailure("register");
+        if (owner === generation && target && !disposed) options.onFailure("register");
         return;
       }
       if (!release) {
