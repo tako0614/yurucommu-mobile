@@ -49,6 +49,7 @@ import {
   type AndroidBackFailure,
   type AndroidBackRegistrar,
 } from "./android-back-navigation.ts";
+import { createDeferredHostRoute } from "./deferred-host-route.ts";
 
 const metrics = [
   { label: "投稿", value: (home) => home?.posts.length },
@@ -372,6 +373,40 @@ export function createYurucommuMobileApp(
           } else void androidBack?.clear(current);
         });
         onCleanup(() => { void androidBack?.clear(current); });
+        const [deferredRoute, setDeferredRoute] = createSignal<NativeNotificationRouteRequest>();
+        const routeIsBlocked = () => {
+          profileState();
+          return profiles.getEditor().getState().visible ||
+            !!profiles.getPostController().getState().postEdit?.visible ||
+            !!notificationState().postEdit?.visible;
+        };
+        const routes = createDeferredHostRoute({
+          session, isActive: () => current.active, isBlocked: routeIsBlocked,
+          onChange: setDeferredRoute,
+          open: (request) => {
+            if (request.target.page === "search") {
+              profiles.close();
+              profileOrigin = undefined;
+              notifications.showHome();
+              search.open(request.target.query, request.target.kind);
+              focusSearch();
+              return;
+            }
+            search.close();
+            if (request.target.page === "profile") {
+              void openProfile(request.target.identifier);
+              return;
+            }
+            profiles.close();
+            profileOrigin = undefined;
+            if (request.target.page === "notifications")
+              void notifications.openNotifications();
+            else if (request.target.page === "post")
+              void notifications.openPost(request.target.apId);
+            else notifications.showHome();
+          },
+        });
+        onCleanup(() => routes.dispose());
         let adoptedRoute: NativeNotificationRouteRequest | undefined;
         createRenderEffect(() => {
           const request = requestedRoute();
@@ -383,26 +418,7 @@ export function createYurucommuMobileApp(
           )
             return;
           adoptedRoute = request;
-          if (request.target.page === "search") {
-            profiles.close();
-            profileOrigin = undefined;
-            notifications.showHome();
-            search.open(request.target.query, request.target.kind);
-            focusSearch();
-            return;
-          }
-          search.close();
-          if (request.target.page === "profile") {
-            void openProfile(request.target.identifier);
-            return;
-          }
-          profiles.close();
-          profileOrigin = undefined;
-          if (request.target.page === "notifications")
-            void notifications.openNotifications();
-          else if (request.target.page === "post")
-            void notifications.openPost(request.target.apId);
-          else notifications.showHome();
+          routes.receive(request);
         });
         current.updateActions = setActions;
         const release = loader.mount(context, (snapshot) =>
@@ -412,6 +428,7 @@ export function createYurucommuMobileApp(
               feedSessionIdentity(session())
             ) {
               deletedPostIds.clear();
+              routes.clear();
               postOrigin = undefined;
               profileOrigin = undefined;
               if (adoptedRoute && requestedRoute() === adoptedRoute)
@@ -436,6 +453,14 @@ export function createYurucommuMobileApp(
               session={session()}
               onDismiss={() => setRouteNotice(undefined)}
             />
+            <Show when={deferredRoute()}>
+              <p role="status" data-deferred-host-route>
+                編集画面を閉じてから、リンク先を開いてください。
+                <button type="button" class="text-button" disabled={routeIsBlocked()}
+                  onClick={() => routes.retry()}>リンク先を開く</button>
+                <button type="button" class="text-button" onClick={() => routes.clear()}>取り消す</button>
+              </p>
+            </Show>
             <ProfileScreen
               session={session()}
               controller={profiles}
