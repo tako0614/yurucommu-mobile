@@ -140,6 +140,9 @@ credential name. Non-ASCII values and anchors are fine.
   `/post/<URL-encoded AP ID>` opens its target post inside the app. Pagination
   uses the server cursor; failures have an explicit retry. Back preserves the
   list and feed draft. Account changes and disposal fence old responses.
+  Selecting another session also retires links received before home mounted;
+  returning to the original saved session does not replay them. Same-session
+  home retries retain the pending link.
   Retry repeats a failed continuation; Reload deliberately starts at page one.
 - Other screens are not in the app: the home screen stays and says so. They
   are not opened in an external browser, because there is no authenticated

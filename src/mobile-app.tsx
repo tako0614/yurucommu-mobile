@@ -31,6 +31,7 @@ import {
 import { createFeedHomeLoader } from "./feed-home-loader.ts";
 import {
   createHostRouteHandoff,
+  pendingHostRouteForSession,
   type HostRouteNotice,
   type NativeNotificationRouteRequest,
 } from "./host-route.ts";
@@ -564,7 +565,10 @@ export function createYurucommuMobileApp(
     disposeAndroidBack: () => androidBack?.dispose() ?? Promise.resolve(),
     adapter: productAdapter,
     createNativeBridge,
-    loadHome: loader.load,
+    loadHome: (session) => {
+      setRequestedRoute(current => pendingHostRouteForSession(current, session));
+      return loader.load(session);
+    },
     registerPush,
     unregisterPush,
     openHostRoute,

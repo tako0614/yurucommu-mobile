@@ -3,6 +3,7 @@ import {
   normalizeHostUrl,
   type MobileSession,
 } from "@takosjp/mobile-kit";
+import { feedSessionIdentity } from "./feed-session.ts";
 
 /**
  * A host route that arrived as a link (`yurucommu://open?path=…`,
@@ -30,6 +31,15 @@ export type NativeNotificationRoute =
 export interface NativeNotificationRouteRequest {
   readonly session: MobileSession;
   readonly target: NativeNotificationRoute;
+}
+
+/** A pre-mount route belongs only to the currently selected session. */
+export function pendingHostRouteForSession(
+  request: NativeNotificationRouteRequest | undefined,
+  session: MobileSession,
+): NativeNotificationRouteRequest | undefined {
+  return request && feedSessionIdentity(request.session) === feedSessionIdentity(session)
+    ? request : undefined;
 }
 
 /**
