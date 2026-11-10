@@ -84,6 +84,13 @@ export function ProfileEdit(props: {
         </Show>
         <Show when={state().loaded}>
           <form
+            onKeyDown={(e) => {
+              if (
+                e.key === "Enter" &&
+                (e.isComposing || e.keyCode === 229)
+              )
+                e.preventDefault();
+            }}
             onSubmit={(e) => {
               e.preventDefault();
               void run(false);
