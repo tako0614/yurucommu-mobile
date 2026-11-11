@@ -43,17 +43,23 @@ export function PostComposer(props: {
             onClick={() => void props.controller.flushRecovery()}>投稿下書きの確認・保存を再試行</button>
         </div></Show>
         <Show when={recovery().intent}>{intent => <div role="status">
-          <p>元の投稿結果は未確認です。復元だけでは再送しません。</p>
+          <p>{props.reply ? "元の返信結果は未確認です。復元だけでは再送しません。" : "元の投稿結果は未確認です。復元だけでは再送しません。"}</p>
           <p style={{ "white-space": "pre-wrap" }}>{intent().content}</p>
           <p>元の公開範囲: {intent().visibility}</p>
+          <Show when={intent().replyTo}>{target => <><p>元の返信先: {target().apId}</p><p>元のコミュニティ: {target().communityApId ?? "なし"}</p></>}</Show>
           <For each={intent().media}>{media => <p>{media.name}</p>}</For>
           <button type="button" class="text-button" disabled={recovery().checkingOutcome || props.state.sending}
-            onClick={() => void props.controller.reviewRecoveryOutcome()}>フィードで投稿結果を確認</button>
+            onClick={() => void props.controller.reviewRecoveryOutcome()}>{props.reply ? "返信一覧で結果を確認" : "フィードで投稿結果を確認"}</button>
           <button type="button" class="text-button" disabled={!recovery().canConfirmReview}
             onClick={() => void props.controller.confirmRecoveryReview()}>元の内容を確認した・次の投稿を許可</button>
           <small>この操作は配達の確定ではなく、自動再送もしません。</small>
         </div>}</Show>
       </>}</Show>
+      <Show when={props.state.replyContextChanged}><div role="alert">
+        <p>保存時と返信先の公開範囲・コミュニティが変わりました。下書きと元の未確認結果は保持しています。</p>
+        <button type="button" class="text-button" disabled={props.state.sending || props.state.recovery?.saving}
+          onClick={() => void props.controller.confirmReplyContext()}>現在の返信先設定で下書きを続ける</button>
+      </div></Show>
       <MobileComposeForm
         onSubmit={(event) => {
           event.preventDefault();

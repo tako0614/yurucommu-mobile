@@ -10,6 +10,7 @@ import { createPostEditStore, type PostEditStore } from "./post-edit-store.ts";
 import type { MobileEditablePost } from "./post-edit-api.ts";
 import { setMobilePostBookmark } from "./api.ts";
 import { createFeedController, type FeedState } from "./feed-controller.ts";
+import type { FeedRecoveryPort } from "./feed-recovery.ts";
 import {
   loadMobileNotificationPost,
   loadMobileNotifications,
@@ -89,6 +90,7 @@ export function createNotificationController(options: {
   onPostDeleteConfirmed?: (postId: string) => void;
   onPostDeleted?: (postId: string) => Promise<void>;
   confirmDiscardReply?: () => boolean | Promise<boolean>;
+  replyRecovery?: (target: { apId: string }) => FeedRecoveryPort;
   edits?: PostEditStore;
   onPostEditReceipt?: (post: MobileEditablePost) => void;
   onPostEditSaved?: () => Promise<void>;
@@ -260,6 +262,12 @@ export function createNotificationController(options: {
       replyComposer = createFeedController({
         session,
         replyTo: target,
+        ...(options.replyRecovery ? { recovery: options.replyRecovery(target) } : {}),
+        readRecoveryOutcome: async () => {
+          const owner = authority, generation = request;
+          if (!live() || postId !== id || state.page !== "post" || !await readReplies(false) ||
+            !current(owner, generation) || postId !== id || state.page !== "post") throw new Error("返信一覧を確認できませんでした。");
+        },
         isActive: () =>
           live() &&
           state.page === "post" &&
@@ -278,7 +286,9 @@ export function createNotificationController(options: {
           if (!ok) throw new Error("返信一覧を更新できませんでした。");
         },
       });
-    } else replyComposer.updateReplyContext(target);
+    } else {
+      replyComposer.updateReplyContext(target);
+    }
   }
 
   async function readReplies(more: boolean): Promise<boolean> {
@@ -445,6 +455,9 @@ export function createNotificationController(options: {
           loading: false,
           replyDraft: post.replyContext ? replyComposer?.getState() : undefined,
         });
+        // The composer is active only after the canonical parent is visible.
+        // Starting restore in ensureReply would refuse this first read.
+        void replyComposer?.restoreRecovery();
         // The view starts its independently retryable conversation read. Its
         // read capability does not depend on having enough metadata to compose.
       }
@@ -534,7 +547,7 @@ export function createNotificationController(options: {
   function hasReplyDraft(): boolean {
     const draft = replyComposer?.getState();
     return !!draft && (
-      !!draft.content.length || !!draft.attachments.length || draft.sending
+      !!draft.content.length || !!draft.attachments.length || draft.sending || !!draft.recovery?.intent
     );
   }
   function canDeletePost(): boolean {

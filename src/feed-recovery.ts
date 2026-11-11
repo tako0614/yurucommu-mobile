@@ -9,6 +9,11 @@ export class FeedRecoveryError extends Error {
 }
 export interface FeedRecoveryScope {
   readonly product: "yurucommu"; readonly hostUrl: string; readonly actorApId: string; readonly apiBaseUrl?: string;
+  readonly replyParentApId?: string;
+  readonly replyView?: "post" | "profile";
+}
+export interface ReplyRecoveryTarget {
+  readonly apId: string; readonly communityApId: string | null; readonly visibility: MobilePostVisibility;
 }
 export type FeedRecoveryAttachment =
   | { readonly phase: "ready"; readonly upload: MobileUploadedAttachment }
@@ -16,10 +21,12 @@ export type FeedRecoveryAttachment =
 export interface FeedRecoveryIntent {
   readonly id: string; readonly phase: "pending" | "uncertain"; readonly content: string;
   readonly visibility: MobilePostVisibility; readonly media: readonly MobileUploadedAttachment[];
+  readonly replyTo?: ReplyRecoveryTarget;
 }
 export interface FeedRecoverySnapshot {
   readonly content: string; readonly visibility: MobilePostVisibility;
   readonly attachments: readonly FeedRecoveryAttachment[]; readonly intent?: FeedRecoveryIntent;
+  readonly reply?: { readonly target: ReplyRecoveryTarget; readonly audienceConfirmed: boolean };
 }
 export type FeedRecoveryPort = Pick<ReturnType<typeof createFeedRecoveryStore>, "load" | "save">;
 function object(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
@@ -44,10 +51,27 @@ function upload(value: unknown, host: string): MobileUploadedAttachment {
     ...(value.expiresAt === undefined ? {} : { expires_at: value.expiresAt }),
   });
 }
-function snapshot(value: unknown, host: string): FeedRecoverySnapshot {
+function replyTarget(value: unknown): ReplyRecoveryTarget {
+  if (!object(value, ["apId", "communityApId", "visibility"]) || !short(value.apId, 2048) || !value.apId.trim() ||
+    !visibility(value.visibility) || (value.communityApId !== null && (!short(value.communityApId, 2048) || !value.communityApId.trim()))) throw new Error();
+  return { apId: value.apId, communityApId: value.communityApId as string | null, visibility: value.visibility };
+}
+function audienceAllowed(selected: MobilePostVisibility, parent: MobilePostVisibility) {
+  return parent === "followers" ? selected === "followers" || selected === "direct" : selected === parent;
+}
+function snapshot(value: unknown, host: string, parentId?: string): FeedRecoverySnapshot {
   try {
-    if (!object(value, ["content", "visibility", "attachments", "intent"]) || !short(value.content, 500) ||
+    if (!object(value, ["content", "visibility", "attachments", "intent", "reply"]) || !short(value.content, 500) ||
       !visibility(value.visibility) || !Array.isArray(value.attachments) || value.attachments.length > 8) throw new Error();
+    let reply: FeedRecoverySnapshot["reply"];
+    if (value.reply !== undefined) {
+      if (!object(value.reply, ["target", "audienceConfirmed"]) || typeof value.reply.audienceConfirmed !== "boolean") throw new Error();
+      reply = { target: replyTarget(value.reply.target), audienceConfirmed: value.reply.audienceConfirmed };
+      if (!audienceAllowed(value.visibility, reply.target.visibility) ||
+        (reply.target.visibility !== "followers" && !reply.audienceConfirmed) ||
+        (value.visibility === "direct" && reply.target.visibility === "followers" && !reply.audienceConfirmed)) throw new Error();
+    }
+    if (parentId === undefined ? reply !== undefined : reply?.target.apId !== parentId) throw new Error();
     const attachments: FeedRecoveryAttachment[] = value.attachments.map(item => {
       if (object(item, ["phase", "upload"]) && item.phase === "ready") {
         const parsed = upload(item.upload, host);
@@ -63,13 +87,16 @@ function snapshot(value: unknown, host: string): FeedRecoverySnapshot {
     let intent: FeedRecoveryIntent | undefined;
     if (value.intent !== undefined) {
       const item = value.intent;
-      if (!object(item, ["id", "phase", "content", "visibility", "media"]) || typeof item.id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/u.test(item.id) ||
+      if (!object(item, ["id", "phase", "content", "visibility", "media", "replyTo"]) || typeof item.id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/u.test(item.id) ||
         (item.phase !== "pending" && item.phase !== "uncertain") || !short(item.content, 500) || !item.content.trim() ||
         !visibility(item.visibility) || !Array.isArray(item.media) || item.media.length > 8) throw new Error();
+      const target = item.replyTo === undefined ? undefined : replyTarget(item.replyTo);
+      if (parentId === undefined ? target !== undefined : target?.apId !== parentId) throw new Error();
+      if (target && !audienceAllowed(item.visibility, target.visibility)) throw new Error();
       intent = { id: item.id, phase: item.phase, content: item.content, visibility: item.visibility,
-        media: item.media.map(value => upload(value, host)) };
+        media: item.media.map(value => upload(value, host)), ...(target ? { replyTo: target } : {}) };
     }
-    return { content: value.content, visibility: value.visibility, attachments, ...(intent ? { intent } : {}) };
+    return { content: value.content, visibility: value.visibility, attachments, ...(intent ? { intent } : {}), ...(reply ? { reply } : {}) };
   } catch { throw new FeedRecoveryError("invalid-data"); }
 }
 const queues = new WeakMap<MobileSecureStore, Promise<void>>();
@@ -84,7 +111,7 @@ export function createFeedRecoveryStore(options: { store: MobileSecureStore; sco
   }
   let host: string;
   try {
-    if (!object(scope, ["product", "hostUrl", "actorApId", "apiBaseUrl"]) || !short(scope.hostUrl, 2048)) throw new Error();
+    if (!object(scope, ["product", "hostUrl", "actorApId", "apiBaseUrl", "replyParentApId", "replyView"]) || !short(scope.hostUrl, 2048)) throw new Error();
     host = normalizeHostUrl(scope.hostUrl);
     const original = new URL(scope.hostUrl);
     if (original.pathname !== "/" || original.search || original.hash || original.username || original.password ||
@@ -93,10 +120,14 @@ export function createFeedRecoveryStore(options: { store: MobileSecureStore; sco
       const api = new URL(scope.apiBaseUrl);
       if (api.origin !== host || api.username || api.password || api.search || api.hash) throw new Error();
     }
+    if (scope.replyParentApId !== undefined && (!short(scope.replyParentApId, 2048) || !scope.replyParentApId.trim())) throw new Error();
+    if (scope.replyView !== undefined && (scope.replyParentApId === undefined || (scope.replyView !== "post" && scope.replyView !== "profile"))) throw new Error();
   } catch { throw new FeedRecoveryError("invalid-scope"); }
   let key: Promise<string> | undefined;
-  const storageKey = () => key ??= digest(JSON.stringify([scope.product, host, scope.actorApId, scope.apiBaseUrl ?? null]))
-    .then(value => "yurucommu:feed-recovery:scope:v1:" + value, cause => { key = undefined; throw cause; });
+  const storageKey = () => key ??= digest(JSON.stringify([scope.product, host, scope.actorApId, scope.apiBaseUrl ?? null,
+    ...(scope.replyParentApId === undefined ? [] : ["reply", scope.replyView ?? "post", scope.replyParentApId])]))
+    .then(value => "yurucommu:" + (scope.replyParentApId === undefined ? "feed" : "reply") + "-recovery:scope:v1:" + value,
+      cause => { key = undefined; throw cause; });
   function queued<T>(work: () => Promise<T>) {
     const next = (queues.get(store) ?? Promise.resolve()).then(work); queues.set(store, next.then(() => {}, () => {})); return next;
   }
@@ -106,7 +137,7 @@ export function createFeedRecoveryStore(options: { store: MobileSecureStore; sco
       const value: unknown = JSON.parse(raw);
       if (!object(value, ["version", "scope", "savedAt", "data"]) || value.version !== 1 || value.scope !== owner ||
         !Number.isSafeInteger(value.savedAt) || (value.savedAt as number) < 0 || (value.savedAt as number) > Date.now()) throw new FeedRecoveryError("invalid-data");
-      return snapshot(value.data, host);
+      return snapshot(value.data, host, scope.replyParentApId);
     } catch (cause) { if (cause instanceof FeedRecoveryError) throw cause; throw new FeedRecoveryError("invalid-data"); }
   }
   return {
@@ -115,7 +146,7 @@ export function createFeedRecoveryStore(options: { store: MobileSecureStore; sco
       catch (cause) { if (cause instanceof FeedRecoveryError) throw cause; throw new FeedRecoveryError("storage", { cause }); }
     }),
     save: async (input: FeedRecoverySnapshot) => {
-      const data = snapshot(input, host);
+      const data = snapshot(input, host, scope.replyParentApId);
       return queued(async () => {
         try {
           const owner = await storageKey(), previous = await store.get(owner);
@@ -140,7 +171,7 @@ const accounts = new WeakMap<MobileSecureStore, Map<string, AccountState>>();
 const indexQueues = new WeakMap<MobileSecureStore, Promise<void>>();
 const indexKey = "yurucommu:feed-recovery:accounts:v1";
 const maxEnvelopeBytes = 4 * 1024 * 1024;
-const scopeKey = /^yurucommu:feed-recovery:scope:v1:[a-f0-9]{64}$/u;
+const scopeKey = /^yurucommu:(?:feed|reply)-recovery:scope:v1:[a-f0-9]{64}$/u;
 
 function bounded(value: unknown, limit: number): asserts value is string {
   if (typeof value !== "string" || value.length > limit || new TextEncoder().encode(value).byteLength > limit) {
@@ -317,11 +348,13 @@ export function createFeedRecoveryAccounts(options: { store?: MobileSecureStore 
   }
   return {
     bind,
-    select(input: { accounts: MobileAccountList; session: MobileSession; actorApId: string }) {
+    select(input: { accounts: MobileAccountList; session: MobileSession; actorApId: string; replyParentApId?: string; replyView?: "post" | "profile" }) {
       const rows = input.accounts.accounts.filter(row => row.id === input.accounts.activeId);
       if (input.session.product !== "yurucommu" || rows.length !== 1 || rows[0].product !== "yurucommu" ||
         mobileAccountIdentity(rows[0]) !== mobileAccountIdentity(input.session)) throw new FeedRecoveryError("invalid-scope");
       return bind(rows[0], { product: "yurucommu", hostUrl: input.session.hostUrl, actorApId: input.actorApId,
+        ...(input.replyParentApId === undefined ? {} : { replyParentApId: input.replyParentApId }),
+        ...(input.replyView === undefined ? {} : { replyView: input.replyView }),
         ...(input.session.apiBaseUrl === undefined ? {} : { apiBaseUrl: input.session.apiBaseUrl }) });
     },
     retire: (account: Account) => accountState(identity(account).value).retire(),

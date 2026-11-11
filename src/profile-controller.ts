@@ -47,6 +47,7 @@ export function createProfileController(options: {
   onChange?: () => void;
   confirmDiscardReply?: () => boolean | Promise<boolean>;
   onPostReplied?: () => Promise<void>;
+  replyRecovery?: Parameters<typeof createNotificationController>[0]["replyRecovery"];
   getActorId?: () => string | undefined;
   confirmDeletePost?: () => boolean | Promise<boolean>;
   onPostDeleteConfirmed?: (postId: string) => void;
@@ -92,6 +93,7 @@ export function createProfileController(options: {
       isActive: () => live() && state.visible && !profileEditorVisible,
       onChange: changed,
       onPostReplied: options.onPostReplied,
+      replyRecovery: options.replyRecovery,
       getActorId: options.getActorId,
       confirmDeletePost: options.confirmDeletePost,
       onPostDeleteConfirmed: (id) => {
