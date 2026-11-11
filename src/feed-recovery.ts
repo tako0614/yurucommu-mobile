@@ -3,7 +3,7 @@ import { mobileAccountIdentity, normalizeHostUrl, type MobileAccountList, type M
 import { decodeMobileUploadReference, type MobilePostVisibility, type MobileUploadedAttachment } from "./api.ts";
 
 export class FeedRecoveryError extends Error {
-  constructor(readonly code: "invalid-scope" | "invalid-data" | "secure-store-unavailable" | "retired" | "storage", options?: ErrorOptions) {
+  constructor(readonly code: "invalid-scope" | "invalid-data" | "changed" | "secure-store-unavailable" | "retired" | "storage", options?: ErrorOptions) {
     super("Feed recovery: " + code, options); this.name = "FeedRecoveryError";
   }
 }
@@ -28,7 +28,9 @@ export interface FeedRecoverySnapshot {
   readonly attachments: readonly FeedRecoveryAttachment[]; readonly intent?: FeedRecoveryIntent;
   readonly reply?: { readonly target: ReplyRecoveryTarget; readonly audienceConfirmed: boolean };
 }
-export type FeedRecoveryPort = Pick<ReturnType<typeof createFeedRecoveryStore>, "load" | "save">;
+export interface FeedInvalidRecoveryReview { discard: () => Promise<void>; }
+export type FeedRecoveryPort = Pick<ReturnType<typeof createFeedRecoveryStore>, "load" | "save"> &
+  Partial<Pick<ReturnType<typeof createFeedRecoveryStore>, "reviewInvalid">>;
 function object(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
@@ -105,7 +107,8 @@ async function digest(value: string) {
   return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 export function createFeedRecoveryStore(options: { store: MobileSecureStore; scope: FeedRecoveryScope }) {
-  const store = options.store, scope = options.scope;
+  const store = options.store;
+  let scope = options.scope;
   if (!store || store.kind !== "secure" || typeof store.get !== "function" || typeof store.set !== "function" || typeof store.delete !== "function") {
     throw new FeedRecoveryError("secure-store-unavailable");
   }
@@ -123,6 +126,7 @@ export function createFeedRecoveryStore(options: { store: MobileSecureStore; sco
     if (scope.replyParentApId !== undefined && (!short(scope.replyParentApId, 2048) || !scope.replyParentApId.trim())) throw new Error();
     if (scope.replyView !== undefined && (scope.replyParentApId === undefined || (scope.replyView !== "post" && scope.replyView !== "profile"))) throw new Error();
   } catch { throw new FeedRecoveryError("invalid-scope"); }
+  scope = Object.freeze({ ...scope, hostUrl: host });
   let key: Promise<string> | undefined;
   const storageKey = () => key ??= digest(JSON.stringify([scope.product, host, scope.actorApId, scope.apiBaseUrl ?? null,
     ...(scope.replyParentApId === undefined ? [] : ["reply", scope.replyView ?? "post", scope.replyParentApId])]))
@@ -131,14 +135,21 @@ export function createFeedRecoveryStore(options: { store: MobileSecureStore; sco
   function queued<T>(work: () => Promise<T>) {
     const next = (queues.get(store) ?? Promise.resolve()).then(work); queues.set(store, next.then(() => {}, () => {})); return next;
   }
-  function decodeSnapshot(raw: string, owner: string) {
+  function header(raw: string, owner: string) {
     try {
       bounded(raw, 256 * 1024);
       const value: unknown = JSON.parse(raw);
       if (!object(value, ["version", "scope", "savedAt", "data"]) || value.version !== 1 || value.scope !== owner ||
         !Number.isSafeInteger(value.savedAt) || (value.savedAt as number) < 0 || (value.savedAt as number) > Date.now()) throw new FeedRecoveryError("invalid-data");
-      return snapshot(value.data, host, scope.replyParentApId);
+      return value.data;
     } catch (cause) { if (cause instanceof FeedRecoveryError) throw cause; throw new FeedRecoveryError("invalid-data"); }
+  }
+  function decodeSnapshot(raw: string, owner: string) { return snapshot(header(raw, owner), host, scope.replyParentApId); }
+  function verifyInvalidContents(raw: string, owner: string) {
+    const data = header(raw, owner);
+    try { snapshot(data, host, scope.replyParentApId); }
+    catch (cause) { if (cause instanceof FeedRecoveryError && cause.code === "invalid-data") return; throw cause; }
+    throw new FeedRecoveryError("changed");
   }
   return {
     load: () => queued(async (): Promise<FeedRecoverySnapshot | null> => {
@@ -156,6 +167,20 @@ export function createFeedRecoveryStore(options: { store: MobileSecureStore; sco
         } catch (cause) { if (cause instanceof FeedRecoveryError) throw cause; throw new FeedRecoveryError("storage", { cause }); }
       });
     },
+    reviewInvalid: () => queued(async (): Promise<FeedInvalidRecoveryReview> => {
+      try {
+        const owner = await storageKey(), raw = await store.get(owner);
+        if (raw === undefined) throw new FeedRecoveryError("changed");
+        verifyInvalidContents(raw, owner);
+        return { discard: () => queued(async () => {
+          try {
+            if (await store.get(owner) !== raw) throw new FeedRecoveryError("changed");
+            verifyInvalidContents(raw, owner);
+            await store.delete(owner);
+          } catch (cause) { if (cause instanceof FeedRecoveryError) throw cause; throw new FeedRecoveryError("storage", { cause }); }
+        }) };
+      } catch (cause) { if (cause instanceof FeedRecoveryError) throw cause; throw new FeedRecoveryError("storage", { cause }); }
+    }),
   };
 }
 
