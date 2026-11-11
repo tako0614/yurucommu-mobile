@@ -10,8 +10,11 @@ export interface PostEditRecoverySnapshot {
   readonly base: MobilePostEditForm; readonly draft: MobilePostEditForm;
   readonly attempted?: { readonly draft: MobilePostEditForm; readonly patch: MobilePostEditPatch };
 }
+export interface PostEditInvalidRecoveryReview {
+  discard: () => Promise<void>;
+}
 export class PostEditRecoveryError extends Error {
-  constructor(readonly code: "invalid-scope" | "invalid-data" | "storage" | "secure-store-unavailable", options?: ErrorOptions) {
+  constructor(readonly code: "invalid-scope" | "invalid-data" | "changed" | "storage" | "secure-store-unavailable", options?: ErrorOptions) {
     super("Post edit recovery: " + code, options); this.name = "PostEditRecoveryError";
   }
 }
@@ -79,13 +82,21 @@ export function createPostEditRecoveryStore(options: { store: MobileSecureStore;
   function queued<T>(work: () => Promise<T>) {
     const next = (queues.get(store) ?? Promise.resolve()).then(work); queues.set(store, next.then(() => {}, () => {})); return next;
   }
-  function decode(raw: string, owner: string) {
+  function header(raw: string, owner: string) {
     try {
       bounded(raw, 256 * 1024); const value: unknown = JSON.parse(raw);
       if (!object(value, ["version", "scope", "savedAt", "data"]) || value.version !== 1 || value.scope !== owner ||
         !Number.isSafeInteger(value.savedAt) || (value.savedAt as number) < 0 || (value.savedAt as number) > Date.now()) throw new Error();
-      return snapshot(value.data);
+      return value.data;
     } catch { throw new PostEditRecoveryError("invalid-data"); }
+  }
+  function decode(raw: string, owner: string) { return snapshot(header(raw, owner)); }
+  function verifyInvalidContents(raw: string, owner: string) {
+    const data = header(raw, owner);
+    // A foreign, unreadable or unsupported header cannot authorize deletion.
+    try { snapshot(data); }
+    catch (cause) { if (cause instanceof PostEditRecoveryError && cause.code === "invalid-data") return; throw cause; }
+    throw new PostEditRecoveryError("changed");
   }
   return {
     scope,
@@ -103,6 +114,20 @@ export function createPostEditRecoveryStore(options: { store: MobileSecureStore;
         } catch (cause) { if (cause instanceof PostEditRecoveryError) throw cause; throw new PostEditRecoveryError("storage", { cause }); }
       });
     },
+    reviewInvalid: () => queued(async (): Promise<PostEditInvalidRecoveryReview> => {
+      try {
+        const owner = await storageKey(), raw = await store.get(owner);
+        if (raw === undefined) throw new PostEditRecoveryError("changed");
+        verifyInvalidContents(raw, owner);
+        return { discard: () => queued(async () => {
+          try {
+            if (await store.get(owner) !== raw) throw new PostEditRecoveryError("changed");
+            verifyInvalidContents(raw, owner);
+            await store.delete(owner);
+          } catch (cause) { if (cause instanceof PostEditRecoveryError) throw cause; throw new PostEditRecoveryError("storage", { cause }); }
+        }) };
+      } catch (cause) { if (cause instanceof PostEditRecoveryError) throw cause; throw new PostEditRecoveryError("storage", { cause }); }
+    }),
   };
 }
 export type PostEditRecoveryPort = ReturnType<typeof createPostEditRecoveryStore>;

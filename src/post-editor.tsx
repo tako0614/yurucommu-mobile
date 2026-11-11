@@ -36,14 +36,27 @@ export function PostEditor(props: {
         <button type="button" class="text-button" disabled={props.state.saving} onClick={props.onClose}>編集を閉じる</button>
       </MobileComposeForm>
       <p>入力は同じ投稿を開き直したときも保持します。別の投稿へ移る際は、未保存の入力を閉じるか確認します。</p>
-      <button type="button" class="text-button" disabled={props.state.loading || props.state.saving} onClick={() => void props.controller.reload()}>現在の保存状態を確認</button>
-      <button type="button" class="text-button" disabled={props.state.loading || props.state.saving || !!props.state.recovery && (props.state.uncertain || !!props.state.recovery.conflicts.length)} onClick={() => void props.controller.discardAndReload()}>入力を破棄して再読込</button>
+      <button type="button" class="text-button" disabled={props.state.loading || props.state.saving || props.state.recovery?.reviewingInvalid || props.state.recovery?.discardingInvalid} onClick={() => void props.controller.reload()}>現在の保存状態を確認</button>
+      <button type="button" class="text-button" disabled={props.state.loading || props.state.saving || !!props.state.recovery && (props.state.uncertain || !!props.state.recovery.conflicts.length || props.state.recovery.reviewingInvalid || props.state.recovery.discardingInvalid)} onClick={() => void props.controller.discardAndReload()}>入力を破棄して再読込</button>
       <Show when={props.state.recovery}>
         {(recovery) => <>
           <p>投稿編集はアカウント・投稿・画面別に安全な保存先へ保持します。結果不明の元編集は自動再送しません。</p>
           <Show when={recovery().saving}><p role="status">投稿編集の復旧情報を保存しています…</p></Show>
           <Show when={recovery().error}><p role="alert">{recovery().error}</p>
-            <button type="button" class="text-button" disabled={props.state.loading || props.state.saving || recovery().saving} onClick={() => void (recovery().ready ? props.controller.flushRecovery() : props.controller.reload())}>復旧情報の保存を再試行</button>
+            <button type="button" class="text-button" disabled={props.state.loading || props.state.saving || recovery().saving || recovery().reviewingInvalid || recovery().discardingInvalid} onClick={() => void (recovery().ready ? props.controller.flushRecovery() : props.controller.reload())}>復旧情報の保存を再試行</button>
+          </Show>
+          <Show when={recovery().reviewingInvalid}><p role="status">保存範囲と破損内容を確認しています…</p></Show>
+          <Show when={recovery().discardingInvalid}><p role="status">破損した保存記録を破棄しています…</p></Show>
+          <Show when={recovery().canReviewInvalid}>
+            <button type="button" class="text-button" onClick={() => void props.controller.reviewInvalidRecovery()}>破損した編集保存を確認</button>
+          </Show>
+          <Show when={recovery().invalidReview}>
+            <div role="group" aria-label="破損した編集保存の破棄確認">
+              <p>このアカウント・投稿・画面の壊れた編集保存を破棄し、投稿を読み直します。読み出せない保存済みの編集や未確認の試行は元に戻せません。</p>
+              <p>現在の画面の入力・確認待ちは保持します。送信・編集結果の確定や、サーバーの投稿を削除する操作ではありません。</p>
+              <button type="button" class="text-button" onClick={() => void props.controller.discardInvalidRecovery()}>この編集の壊れた保存を破棄</button>
+              <button type="button" class="text-button" onClick={() => props.controller.cancelInvalidRecoveryReview()}>破棄せず戻る</button>
+            </div>
           </Show>
           <Show when={recovery().attempted}><details><summary>結果を確認する元の編集</summary><pre style={{ "white-space": "pre-wrap", "overflow-wrap": "anywhere" }}>{JSON.stringify(recovery().attempted, null, 2)}</pre></details></Show>
           <Show when={recovery().conflicts.length}><p role="alert">別の操作で変更された項目があります。現在の保存内容と入力を比較してください。</p></Show>
