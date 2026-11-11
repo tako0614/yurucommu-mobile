@@ -1,15 +1,18 @@
 import {
   batch,
   createRenderEffect,
+  createEffect,
   createRoot,
   createSignal,
   getOwner,
   onCleanup,
+  onMount,
   Show,
   type JSX,
 } from "solid-js";
 import type { NativeBridge } from "@takosjp/mobile-kit";
-import { confirmMobileAction } from "@takosjp/mobile-kit";
+import { confirmMobileAction, loadMobileAccounts, mobileAccountIdentity, normalizeHostUrl, type MobileRetiredAccountScope } from "@takosjp/mobile-kit";
+import { createFeedRecoveryAccounts, type FeedRecoveryPort } from "./feed-recovery.ts";
 import {
   MobileClientApp,
   type MobileClientAppProps,
@@ -84,6 +87,46 @@ export function createYurucommuMobileApp(
   BackRecovery: () => JSX.Element;
   disposeAndroidBack: () => Promise<void>;
 } {
+  let bridge: NativeBridge | undefined;
+  const sharedBridge = () => bridge ??= createNativeBridge();
+  let recoveryAccounts: ReturnType<typeof createFeedRecoveryAccounts> | undefined;
+  const recovery = () => recoveryAccounts ??= createFeedRecoveryAccounts({ store: sharedBridge().secureStore });
+  type CleanupAccount = Pick<MobileRetiredAccountScope, "id" | "hostUrl" | "product">;
+  const [cleanupFailures, setCleanupFailures] = createSignal<readonly CleanupAccount[]>([]);
+  const [cleanupCheckError, setCleanupCheckError] = createSignal(false);
+  const [cleaning, setCleaning] = createSignal(false);
+  const cleanupKey = (row: CleanupAccount) => JSON.stringify([row.product, normalizeHostUrl(row.hostUrl), row.id]);
+  async function cleanupScope(scope: CleanupAccount) {
+    try {
+      await recovery().retire(scope);
+      setCleanupFailures(rows => rows.filter(row => cleanupKey(row) !== cleanupKey(scope)));
+    } catch {
+      setCleanupFailures(rows => rows.some(row => cleanupKey(row) === cleanupKey(scope)) ? rows : [...rows, scope]);
+      throw new Error("サインアウトしましたが、このアカウントの投稿下書き削除を確認できませんでした。");
+    }
+  }
+  async function restoreCleanup() {
+    if (!sharedBridge().secureStore) return true;
+    try {
+      const saved = await loadMobileAccounts({ adapter: productAdapter, nativeBridge: sharedBridge() });
+      const pending = await recovery().pendingCleanup(saved);
+      const present = new Set(saved.accounts.map(cleanupKey));
+      setCleanupFailures(previous => [...new Map([...previous, ...pending]
+        .filter(row => !present.has(cleanupKey(row))).map(row => [cleanupKey(row), row])).values()]);
+      setCleanupCheckError(false);
+      return true;
+    } catch { setCleanupCheckError(true); return false; }
+  }
+  onMount(() => { void restoreCleanup(); });
+  async function retryCleanup() {
+    if (cleaning()) return;
+    setCleaning(true);
+    try {
+      if (!await restoreCleanup()) return;
+      for (const scope of cleanupFailures()) { try { await cleanupScope(scope); } catch { /* The exact row remains retryable. */ } }
+    }
+    finally { setCleaning(false); }
+  }
   const loader = createFeedHomeLoader({ loadHome });
   const [backFailure, setBackFailure] = createSignal<AndroidBackFailure>();
   const androidBack = registerAndroidBack
@@ -151,6 +194,32 @@ export function createYurucommuMobileApp(
         };
         const [session, setSession] = createSignal(context.session);
         const [actions, setActions] = createSignal(context);
+        const [binding, setBinding] = createSignal<{ key: string; port: FeedRecoveryPort }>();
+        const [bindingError, setBindingError] = createSignal("");
+        const [bindingRetry, setBindingRetry] = createSignal(0);
+        let bindingEpoch = 0, selectedIdentity = "", selectedActor: string | undefined;
+        createEffect(() => {
+          bindingRetry();
+          const currentSession = session(), currentHome = home(), identity = feedSessionIdentity(currentSession);
+          const actor = currentHome?.actor.ap_id;
+          if (identity !== selectedIdentity || (actor !== undefined && actor !== selectedActor)) {
+            selectedIdentity = identity; selectedActor = actor; setBinding(undefined);
+          }
+          const epoch = ++bindingEpoch; if (!actor) return;
+          let live = true; onCleanup(() => { live = false; });
+          void (async () => {
+            try {
+              const accounts = await loadMobileAccounts({ adapter: productAdapter, nativeBridge: sharedBridge() });
+              if (!live || epoch !== bindingEpoch || !current.active) return;
+              const row = accounts.accounts.find(row => row.id === accounts.activeId);
+              if (!row || row.product !== currentSession.product || mobileAccountIdentity(row) !== mobileAccountIdentity(currentSession)) throw new Error();
+              const key = JSON.stringify([identity, row.id, actor]);
+              const port = recovery().select({ accounts, session: currentSession, actorApId: actor });
+              setBinding(previous => previous?.key === key ? previous : { key, port }); setBindingError("");
+            } catch { if (live && epoch === bindingEpoch) setBindingError("このアカウントの安全な投稿下書き保存先を確認できませんでした。"); }
+          })();
+        });
+
         const [editRevision, setEditRevision] = createSignal(0);
         const edits = createPostEditStore({ session: context.session, onChange: () => setEditRevision(value => value + 1) });
         createRenderEffect(() => edits.updateSession(session()));
@@ -500,7 +569,13 @@ export function createYurucommuMobileApp(
               >
                 <button ref={searchTrigger} type="button" class="text-button"
                   onClick={() => { search.open(); focusSearch(); }}>投稿・ユーザーを検索</button>
+                <Show when={bindingError()}><div role="alert"><p>{bindingError()}</p>
+                  <button type="button" class="text-button" onClick={() => setBindingRetry(value => value + 1)}>投稿下書きの保存先を再確認</button>
+                </div></Show>
+                <Show when={binding()} keyed fallback={<p role="status">投稿下書きの保存先を確認中…</p>}>
+                  {selected =>
                 <Feed
+                  recovery={selected.port}
                   home={home()}
                   projectPosts={projectHomePosts}
                   session={session()}
@@ -514,6 +589,8 @@ export function createYurucommuMobileApp(
                   onOpenPost={openPost}
                   onOpenProfile={openProfile}
                 />
+                  }
+                </Show>
                 <BookmarksPreview
                   edits={edits}
                   editRevision={editRevision()}
@@ -554,17 +631,24 @@ export function createYurucommuMobileApp(
   return {
     // Remains mounted across sign-out: a failed native removal must stay
     // recoverable even after the account-owned feed view has been retired.
-    BackRecovery: () => <Show when={backFailure()}>
+    BackRecovery: () => <><Show when={cleanupCheckError()}><div role="alert">
+      <p>未完の投稿下書き削除を確認できませんでした。保存データは削除していません。</p>
+      <button type="button" class="text-button" disabled={cleaning()} onClick={() => void retryCleanup()}>投稿下書き削除の確認を再試行</button>
+    </div></Show><Show when={cleanupFailures().length}><div role="alert">
+      <p>サインアウト済みアカウントの投稿下書き削除を確認できませんでした。</p>
+      <button type="button" class="text-button" disabled={cleaning()} onClick={() => void retryCleanup()}>投稿下書きの削除を再試行</button>
+    </div></Show><Show when={backFailure()}>
       <div role="alert">
         <p>Androidの戻る操作を更新できませんでした。画面内の「戻る」を使い、再接続を試してください。</p>
         <button type="button" class="text-button" onClick={() => void androidBack?.retry()}>
           Androidの戻る操作を再接続
         </button>
       </div>
-    </Show>,
+    </Show></>,
+    onAccountScopeRetired: cleanupScope,
     disposeAndroidBack: () => androidBack?.dispose() ?? Promise.resolve(),
     adapter: productAdapter,
-    createNativeBridge,
+    createNativeBridge: sharedBridge,
     loadHome: (session) => {
       setRequestedRoute(current => pendingHostRouteForSession(current, session));
       return loader.load(session);

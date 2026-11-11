@@ -8,6 +8,7 @@ import {
   type MobileReplyTarget,
 } from "./api.ts";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
+import type { FeedRecoveryPort, FeedRecoverySnapshot, FeedRecoveryIntent, FeedRecoveryAttachment } from "./feed-recovery.ts";
 
 export type FeedVisibility = MobilePostVisibility;
 export const MAX_MOBILE_ATTACHMENTS = 8;
@@ -17,7 +18,7 @@ export interface FeedAttachment {
   readonly name: string;
   readonly contentType: string;
   readonly previewUrl: string;
-  readonly phase: "queued" | "uploading" | "ready" | "error";
+  readonly phase: "queued" | "uploading" | "ready" | "error" | "reselect";
   readonly error?: string;
 }
 
@@ -32,6 +33,9 @@ export interface FeedState {
   readonly attachmentError: string;
   readonly canSubmit: boolean;
   readonly replyAudienceNeedsChoice?: boolean;
+  readonly recovery?: { readonly ready: boolean; readonly loading: boolean; readonly saving: boolean; readonly error: string;
+    readonly intent?: FeedRecoveryIntent; readonly canConfirmReview: boolean; readonly checkingOutcome: boolean };
+
 }
 
 // One authority incarnation owns its draft and pending send. Its request keeps
@@ -39,10 +43,14 @@ export interface FeedState {
 export function createFeedController(options: {
   session: MobileSession;
   refreshHome: () => Promise<void>;
+  /** Must perform and display a canonical read, and reject if that read fails. */
+  readRecoveryOutcome?: () => Promise<void>;
   onChange?: (state: FeedState) => void;
   isActive?: () => boolean;
   replyTo?: MobileReplyTarget & Readonly<{ visibility: FeedVisibility }>;
+  recovery?: Pick<FeedRecoveryPort, "save"> & Partial<Pick<FeedRecoveryPort, "load">>;
 }) {
+  if (options.recovery && options.replyTo) throw new Error("返信には専用の回復scopeが必要です。");
   let replyTarget = options.replyTo ? { ...options.replyTo } : undefined;
   let session = snapshotFeedSession(options.session);
   let sessionKey = feedSessionIdentity(session);
@@ -60,10 +68,16 @@ export function createFeedController(options: {
   let refreshError = "";
   let postAbort: AbortController | undefined;
   let attachmentError = "";
+  let recoveryLoaded = !options.recovery?.load, recoveryRetired = false, recoveryError = "", recoverySaving = 0;
+  let recoveryRevision = 0, savedRecoveryRevision = 0;
+  let recoveryLoad: Promise<void> | undefined, recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+  let sendIntent: FeedRecoveryIntent | undefined, confirmingIntent: string | undefined;
+  let recoveryReviewed = false, checkingOutcome = false;
+
   let nextAttachmentId = 0;
   type Entry = {
     view: FeedAttachment;
-    file: File;
+    file?: File;
     uploaded?: MobileUploadedAttachment;
     abort?: AbortController;
   };
@@ -80,8 +94,12 @@ export function createFeedController(options: {
       refreshError,
       attachments: Array.from(attachments.values(), (entry) => entry.view),
       attachmentError,
+      recovery: options.recovery ? { ready: recoveryLoaded, loading: !recoveryLoaded && !!recoveryLoad, saving: recoverySaving > 0,
+        error: recoveryError, intent: sendIntent, canConfirmReview: !!sendIntent && recoveryReviewed && !sending && recoverySaving === 0 && !checkingOutcome,
+        checkingOutcome } : undefined,
       ...(replyTarget ? { replyAudienceNeedsChoice: !audienceConfirmed } : {}),
       canSubmit:
+        (!options.recovery || (recoveryLoaded && !recoveryRetired && !recoveryError && !sendIntent && !confirmingIntent)) &&
         audienceConfirmed &&
         canSubmitMobileText({
           value: content,
@@ -107,15 +125,95 @@ export function createFeedController(options: {
     if (active(authority)) options.onChange?.(getState());
   }
 
+  function recoverySnapshot(): FeedRecoverySnapshot {
+    const saved: FeedRecoveryAttachment[] = Array.from(attachments.values(), entry => entry.uploaded
+      ? { phase: "ready", upload: { ...entry.uploaded } }
+      : { phase: "reselect", name: entry.view.name, contentType: entry.view.contentType,
+        ...(entry.file ? { size: entry.file.size } : {}) });
+    return { content, visibility, attachments: saved,
+      ...(sendIntent && sendIntent.id !== confirmingIntent ? { intent: { ...sendIntent, media: sendIntent.media.map(item => ({ ...item })) } } : {}) };
+  }
+  function restoreRecovery(): Promise<void> {
+    if (recoveryLoaded || !options.recovery?.load || recoveryRetired || !active(authority)) return Promise.resolve();
+    if (recoveryLoad) return recoveryLoad;
+    const expected = authority;
+    recoveryError = "";
+    recoveryLoad = (async () => {
+      try {
+        const saved = await options.recovery!.load!();
+        if (!active(expected) || recoveryRetired) return;
+        if (saved) {
+          if (draftRevision === 0) { content = saved.content; visibility = saved.visibility; }
+          for (const item of saved.attachments) {
+            const uploaded = item.phase === "ready" ? { ...item.upload } : undefined;
+            const view: FeedAttachment = { id: ++nextAttachmentId, name: uploaded?.name ?? (item.phase === "reselect" ? item.name : "添付"),
+              contentType: uploaded?.content_type ?? (item.phase === "reselect" ? item.contentType : ""), previewUrl: "",
+              phase: uploaded ? "ready" : "reselect", ...(uploaded ? {} : { error: "元のファイルを再選択してください。" }) };
+            attachments.set(view.id, { uploaded, view });
+          }
+          sendIntent = saved.intent ? { ...saved.intent, phase: "uncertain" } : undefined;
+          if (sendIntent) error = "再起動前の投稿結果は未確認です。元の内容とフィードを確認してください。";
+        }
+        recoveryLoaded = true;
+      } catch { if (active(expected)) recoveryError = "保存した投稿下書きを確認できませんでした。再確認するまで保存・送信を待機します。"; }
+      finally { if (active(expected)) { recoveryLoad = undefined; publish(); } }
+    })();
+    publish(); return recoveryLoad;
+  }
+  async function checkpointRecovery(expected: number) {
+    if (!options.recovery) return;
+    if (!recoveryLoaded) throw new Error("投稿下書きの確認が必要です。");
+    let revision: number;
+    do {
+      if (!active(expected) || recoveryRetired) return;
+      revision = recoveryRevision;
+      await options.recovery.save(recoverySnapshot());
+      if (active(expected)) savedRecoveryRevision = revision;
+    } while (active(expected) && !recoveryRetired && recoveryRevision !== revision);
+  }
+  async function persistRecovery(): Promise<boolean> {
+    clearTimeout(recoveryTimer); recoveryTimer = undefined;
+    if (!options.recovery || recoveryRetired || !active(authority)) return false;
+    if (!recoveryLoaded) await restoreRecovery();
+    if (!recoveryLoaded || recoveryRetired || !active(authority)) return false;
+    const expected = authority; recoverySaving++; publish();
+    try { await checkpointRecovery(expected); if (active(expected)) recoveryError = ""; return active(expected); }
+    catch { if (active(expected)) recoveryError = "投稿下書きの保存を確認できませんでした。保存を再試行してください。"; return false; }
+    finally { recoverySaving--; publish(); }
+  }
+  async function flushRecovery() { await persistRecovery(); }
+  function changedRecovery() {
+    recoveryRevision++;
+    if (!options.recovery || !recoveryLoaded || recoveryRetired || recoveryError || !active(authority)) return;
+    clearTimeout(recoveryTimer); recoveryTimer = setTimeout(() => { recoveryTimer = undefined; void flushRecovery(); }, 150);
+  }
+  async function reviewRecoveryOutcome() {
+    if (!sendIntent || !options.readRecoveryOutcome || checkingOutcome || sending || !active(authority) || recoveryRetired) return;
+    const expected = authority, id = sendIntent.id; checkingOutcome = true; recoveryReviewed = false; publish();
+    try { await options.readRecoveryOutcome(); if (active(expected) && sendIntent?.id === id) recoveryReviewed = true; }
+    catch { if (active(expected)) recoveryError = "フィードを確認できませんでした。下書きと元の投稿内容は保持しています。"; }
+    finally { checkingOutcome = false; publish(); }
+  }
+  async function confirmRecoveryReview() {
+    if (!getState().recovery?.canConfirmReview || !sendIntent || !active(authority) || recoveryRetired) return;
+    const expected = authority, original = sendIntent; confirmingIntent = original.id;
+    try {
+      if (await persistRecovery() && active(expected) && sendIntent === original) {
+        sendIntent = undefined; error = ""; recoveryReviewed = false;
+      }
+    } finally { confirmingIntent = undefined; publish(); }
+  }
+
   function setDraft(value: string) {
-    if (!active(authority) || value === content) return;
+    if (!active(authority) || !recoveryLoaded || value === content) return;
     content = value;
     draftRevision += 1;
+    changedRecovery();
     publish();
   }
 
   function setVisibility(value: FeedVisibility) {
-    if (!active(authority)) return;
+    if (!active(authority) || !recoveryLoaded) return;
     if (
       replyTarget &&
       (replyTarget.visibility !== "followers" ||
@@ -126,6 +224,7 @@ export function createFeedController(options: {
     visibility = value;
     audienceConfirmed = true;
     draftRevision += 1;
+    changedRecovery();
     publish();
   }
 
@@ -135,12 +234,13 @@ export function createFeedController(options: {
     clearAttachments();
     attachmentError = "";
     draftRevision += 1;
+    changedRecovery();
     publish();
   }
 
   function releaseEntry(entry: Entry) {
     entry.abort?.abort();
-    URL.revokeObjectURL(entry.view.previewUrl);
+    if (entry.view.previewUrl) URL.revokeObjectURL(entry.view.previewUrl);
   }
 
   function clearAttachments() {
@@ -155,6 +255,7 @@ export function createFeedController(options: {
     attachments.delete(id);
     releaseEntry(entry);
     draftRevision += 1;
+    changedRecovery();
     publish();
   }
 
@@ -174,11 +275,11 @@ export function createFeedController(options: {
           const abort = new AbortController();
           entry.abort = abort;
           entry.view = { ...entry.view, phase: "uploading", error: undefined };
-          publish();
+          changedRecovery(); publish();
           try {
             const uploaded = await uploadPostMedia(
               selected,
-              entry.file,
+              entry.file!,
               abort.signal,
             );
             if (!active(expected) || attachments.get(id) !== entry) continue;
@@ -194,7 +295,7 @@ export function createFeedController(options: {
             };
           } finally {
             if (entry.abort === abort) entry.abort = undefined;
-            if (active(expected)) publish();
+            if (active(expected)) { changedRecovery(); publish(); }
           }
         }
       } finally {
@@ -206,7 +307,7 @@ export function createFeedController(options: {
   }
 
   function addFiles(files: readonly File[]): Promise<void> {
-    if (!active(authority) || !files.length) return Promise.resolve();
+    if (!active(authority) || !recoveryLoaded || !files.length) return Promise.resolve();
     if (attachments.size + files.length > MAX_MOBILE_ATTACHMENTS) {
       attachmentError = `添付は${MAX_MOBILE_ATTACHMENTS}件までです。`;
       publish();
@@ -242,6 +343,7 @@ export function createFeedController(options: {
     for (const entry of selected) attachments.set(entry.view.id, entry);
     attachmentError = "";
     draftRevision += 1;
+    changedRecovery();
     publish();
     return runUploads();
   }
@@ -249,28 +351,32 @@ export function createFeedController(options: {
   function retryAttachment(id: number): Promise<void> {
     if (!active(authority)) return Promise.resolve();
     const entry = attachments.get(id);
-    if (!entry || entry.view.phase !== "error") return Promise.resolve();
+    if (!entry || entry.view.phase !== "error" || !entry.file) return Promise.resolve();
     entry.view = { ...entry.view, phase: "queued", error: undefined };
     draftRevision += 1;
+    changedRecovery();
     publish();
     return runUploads();
   }
 
   async function submit() {
     if (!active(authority) || !getState().canSubmit) return;
+    let expiredMedia = false;
     for (const entry of attachments.values()) {
       if (
         entry.uploaded?.expiresAt &&
         Date.parse(entry.uploaded.expiresAt) <= Date.now()
       ) {
+        expiredMedia = true;
         entry.uploaded = undefined;
         entry.view = {
           ...entry.view,
-          phase: "error",
-          error: "添付の有効期限が切れました。再アップロードしてください。",
+          phase: entry.file ? "error" : "reselect",
+          error: "添付の有効期限が切れました。元のファイルを再選択してください。",
         };
       }
     }
+    if (expiredMedia) changedRecovery();
     if (!getState().canSubmit) {
       publish();
       return;
@@ -292,8 +398,27 @@ export function createFeedController(options: {
     status = "";
     refreshError = "";
     publish();
-    let accepted = false;
+    let accepted = false, dispatched = false;
+    // This ID correlates local work within the incarnation; it is never a server idempotency key.
+    const originalIntent: FeedRecoveryIntent = { id: "local-" + attempt, phase: "pending", content: submittedContent,
+      visibility: submittedVisibility, media: submittedMedia.map(item => ({ ...item })) };
+    if (options.recovery) { sendIntent = originalIntent; recoveryRevision++; }
+    clearTimeout(recoveryTimer); recoveryTimer = undefined;
     try {
+      if (options.recovery) {
+        await checkpointRecovery(expected);
+        if (!active(expected) || recoveryRetired || requestAbort.signal.aborted) return;
+        if (submittedMedia.some(item => item.expiresAt !== undefined && Date.parse(item.expiresAt) <= Date.now())) {
+          for (const entry of submittedEntries) {
+            if (attachments.get(entry.view.id) === entry && entry.uploaded?.expiresAt !== undefined && Date.parse(entry.uploaded.expiresAt) <= Date.now()) {
+              entry.uploaded = undefined; entry.view = { ...entry.view, phase: entry.file ? "error" : "reselect", error: "元のファイルを再選択してください。" };
+            }
+          }
+          changedRecovery();
+          throw new Error("添付の有効期限が切れました。再アップロードしてください。");
+        }
+      }
+      dispatched = true;
       await createPost(
         submittedSession,
         submittedContent,
@@ -303,11 +428,12 @@ export function createFeedController(options: {
         replyTarget,
       );
       if (!active(expected)) return;
-      accepted = true;
+      accepted = true; sendIntent = undefined; recoveryRevision++;
       status = replyTarget ? "返信を投稿しました。" : "投稿を送信しました。";
       if (draftRevision === revision) {
         content = "";
         draftRevision += 1;
+        changedRecovery();
       }
       // Retire only the files in this accepted post. New files/text selected
       // while it was pending belong to the next draft, even on the same account.
@@ -323,6 +449,11 @@ export function createFeedController(options: {
         cause instanceof Error
           ? cause.message
           : "投稿の結果を確認できませんでした。";
+      if (options.recovery) {
+        sendIntent = dispatched ? { ...originalIntent, phase: "uncertain" } : undefined;
+        recoveryRevision++;
+        if (!dispatched) recoveryError = "投稿前の保存または添付の確認が必要です。保存を再試行してください。";
+      }
       // A network or malformed acknowledgment can follow a committed POST.
       // Keep the draft and never infer that retrying the mutation is safe.
       if (!error.includes("再送する前に")) {
@@ -334,6 +465,7 @@ export function createFeedController(options: {
       if (postAbort === requestAbort) postAbort = undefined;
       if (active(expected)) {
         sending = false;
+        if (dispatched && options.recovery) await persistRecovery();
         publish();
       }
     }
@@ -380,6 +512,7 @@ export function createFeedController(options: {
     refreshError = "";
     sendRevision += 1;
     draftRevision += 1;
+    changedRecovery();
     publish();
   }
 
@@ -399,6 +532,7 @@ export function createFeedController(options: {
     visibility = target.visibility;
     audienceConfirmed = target.visibility !== "followers";
     draftRevision += 1;
+    changedRecovery();
     publish();
   }
 
@@ -408,6 +542,8 @@ export function createFeedController(options: {
     session = snapshotFeedSession(next);
     if (key === sessionKey) return;
     sessionKey = key;
+    clearTimeout(recoveryTimer); recoveryTimer = undefined; recoveryRetired = !!options.recovery;
+    sendIntent = undefined; recoveryReviewed = false; recoveryError = "";
     authority += 1;
     postAbort?.abort();
     postAbort = undefined;
@@ -415,6 +551,7 @@ export function createFeedController(options: {
     pump = undefined;
     sendRevision += 1;
     draftRevision += 1;
+    changedRecovery();
     content = "";
     visibility = replyTarget?.visibility ?? "public";
     audienceConfirmed = !replyTarget || replyTarget.visibility !== "followers";
@@ -427,6 +564,8 @@ export function createFeedController(options: {
   }
 
   function dispose() {
+    if (options.recovery && recoveryLoaded && !recoveryRetired && !recoveryError && savedRecoveryRevision !== recoveryRevision) void flushRecovery();
+    clearTimeout(recoveryTimer); recoveryTimer = undefined;
     disposed = true;
     postAbort?.abort();
     postAbort = undefined;
@@ -440,6 +579,7 @@ export function createFeedController(options: {
 
   return {
     getState,
+    restoreRecovery, flushRecovery, reviewRecoveryOutcome, confirmRecoveryReview,
     setDraft,
     setVisibility,
     clearDraft,
