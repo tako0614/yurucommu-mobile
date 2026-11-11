@@ -31,6 +31,7 @@ export function PostComposer(props: {
   const visibility = () => props.state.visibility;
   const sending = () => props.state.sending;
   const canPost = () => props.state.canSubmit;
+  const recoveryBusy = () => props.state.recovery?.reviewingInvalid || props.state.recovery?.discardingInvalid || props.state.recovery?.discardPending;
   const attachmentIds = createMemo(() =>
     props.state.attachments.map((item) => item.id),
   );
@@ -39,16 +40,30 @@ export function PostComposer(props: {
       <Show when={props.state.recovery}>{recovery => <>
         <Show when={recovery().loading || recovery().saving}><p role="status">{recovery().loading ? "保存した投稿下書きを確認中…" : "投稿下書きを保存中…"}</p></Show>
         <Show when={recovery().error}><div role="alert"><p>{recovery().error}</p>
-          <button type="button" class="text-button" disabled={recovery().loading || recovery().saving}
+          <button type="button" class="text-button" disabled={recovery().loading || recovery().saving || recovery().reviewingInvalid || recovery().discardingInvalid || recovery().checkingOutcome}
             onClick={() => void props.controller.flushRecovery()}>投稿下書きの確認・保存を再試行</button>
         </div></Show>
+        <Show when={recovery().reviewingInvalid}><p role="status">下書きの保存範囲と破損内容を確認しています…</p></Show>
+        <Show when={recovery().discardingInvalid}><p role="status">破損した下書き保存を破棄しています…</p></Show>
+        <Show when={recovery().discardPending && recovery().checkingOutcome}><p role="status">破棄後の保存先と現在の投稿結果を確認しています…</p></Show>
+        <Show when={recovery().canReviewInvalid}>
+          <button type="button" class="text-button" onClick={() => void props.controller.reviewInvalidRecovery()}>破損した投稿下書きを確認</button>
+        </Show>
+        <Show when={recovery().invalidReview}>
+          <div role="group" aria-label="破損した投稿下書きの破棄確認">
+            <p>このアカウント・本人・接続先の{props.reply ? "この返信先・画面の" : "ホームの"}壊れた下書き保存だけを破棄し、現在の投稿結果を確認します。読み出せない保存済みの本文・添付情報・元の投稿結果不明の記録は元に戻せません。</p>
+            <p>現在の画面の入力・添付・未確認の元投稿は保持します。この操作だけでは投稿や再送、配達の確定は行いません。</p>
+            <button type="button" class="text-button" onClick={() => void props.controller.discardInvalidRecovery()}>この下書きの壊れた保存を破棄</button>
+            <button type="button" class="text-button" onClick={() => props.controller.cancelInvalidRecoveryReview()}>破棄せず戻る</button>
+          </div>
+        </Show>
         <Show when={recovery().intent}>{intent => <div role="status">
           <p>{props.reply ? "元の返信結果は未確認です。復元だけでは再送しません。" : "元の投稿結果は未確認です。復元だけでは再送しません。"}</p>
           <p style={{ "white-space": "pre-wrap" }}>{intent().content}</p>
           <p>元の公開範囲: {intent().visibility}</p>
           <Show when={intent().replyTo}>{target => <><p>元の返信先: {target().apId}</p><p>元のコミュニティ: {target().communityApId ?? "なし"}</p></>}</Show>
           <For each={intent().media}>{media => <p>{media.name}</p>}</For>
-          <button type="button" class="text-button" disabled={recovery().checkingOutcome || props.state.sending}
+          <button type="button" class="text-button" disabled={recovery().checkingOutcome || props.state.sending || recovery().reviewingInvalid || recovery().discardingInvalid || recovery().invalidReview}
             onClick={() => void props.controller.reviewRecoveryOutcome()}>{props.reply ? "返信一覧で結果を確認" : "フィードで投稿結果を確認"}</button>
           <button type="button" class="text-button" disabled={!recovery().canConfirmReview}
             onClick={() => void props.controller.confirmRecoveryReview()}>元の内容を確認した・次の投稿を許可</button>
@@ -94,7 +109,7 @@ export function PostComposer(props: {
               aria-label="画像・動画を添付"
               accept={allowedMimeTypes.join(",")}
               disabled={
-                props.state.attachments.length >= MAX_MOBILE_ATTACHMENTS || (!!props.state.recovery && !props.state.recovery.ready)
+                props.state.attachments.length >= MAX_MOBILE_ATTACHMENTS || (!!props.state.recovery && !props.state.recovery.ready) || recoveryBusy()
               }
               onChange={(event) => {
                 const files = Array.from(event.currentTarget.files ?? []);
@@ -157,6 +172,7 @@ export function PostComposer(props: {
                           <button
                             type="button"
                             class="secondary"
+                            disabled={recoveryBusy()}
                             onClick={() =>
                               void props.controller.retryAttachment(id)
                             }

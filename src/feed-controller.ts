@@ -8,7 +8,7 @@ import {
   type MobileReplyTarget,
 } from "./api.ts";
 import { feedSessionIdentity, snapshotFeedSession } from "./feed-session.ts";
-import type { FeedRecoveryPort, FeedRecoverySnapshot, FeedRecoveryIntent, FeedRecoveryAttachment } from "./feed-recovery.ts";
+import { FeedRecoveryError, type FeedRecoveryPort, type FeedRecoverySnapshot, type FeedRecoveryIntent, type FeedRecoveryAttachment, type FeedInvalidRecoveryReview } from "./feed-recovery.ts";
 
 export type FeedVisibility = MobilePostVisibility;
 export const MAX_MOBILE_ATTACHMENTS = 8;
@@ -35,7 +35,8 @@ export interface FeedState {
   readonly replyAudienceNeedsChoice?: boolean;
   readonly replyContextChanged?: boolean;
   readonly recovery?: { readonly ready: boolean; readonly loading: boolean; readonly saving: boolean; readonly error: string;
-    readonly intent?: FeedRecoveryIntent; readonly canConfirmReview: boolean; readonly checkingOutcome: boolean };
+    readonly intent?: FeedRecoveryIntent; readonly canConfirmReview: boolean; readonly checkingOutcome: boolean;
+    readonly canReviewInvalid: boolean; readonly reviewingInvalid: boolean; readonly discardingInvalid: boolean; readonly invalidReview: boolean; readonly discardPending: boolean };
 
 }
 
@@ -49,7 +50,7 @@ export function createFeedController(options: {
   onChange?: (state: FeedState) => void;
   isActive?: () => boolean;
   replyTo?: MobileReplyTarget & Readonly<{ visibility: FeedVisibility }>;
-  recovery?: Pick<FeedRecoveryPort, "save"> & Partial<Pick<FeedRecoveryPort, "load">>;
+  recovery?: Pick<FeedRecoveryPort, "save"> & Partial<Pick<FeedRecoveryPort, "load" | "reviewInvalid">>;
 }) {
   let replyTarget = options.replyTo ? { ...options.replyTo } : undefined;
   let previousReplyTarget: typeof replyTarget;
@@ -74,6 +75,9 @@ export function createFeedController(options: {
   let recoveryLoad: Promise<void> | undefined, recoveryTimer: ReturnType<typeof setTimeout> | undefined;
   let sendIntent: FeedRecoveryIntent | undefined, confirmingIntent: string | undefined;
   let recoveryReviewed = false, checkingOutcome = false;
+  let recoveryInvalid = false, reviewingInvalid = false, discardingInvalid = false, invalidDiscardPending = false, invalidReviewEpoch = 0;
+  let invalidResolution: Promise<boolean> | undefined;
+  let invalidReview: { value: FeedInvalidRecoveryReview; port: NonNullable<typeof options.recovery>; authority: number; revision: number } | undefined;
 
   let nextAttachmentId = 0;
   type Entry = {
@@ -96,12 +100,13 @@ export function createFeedController(options: {
       attachments: Array.from(attachments.values(), (entry) => entry.view),
       attachmentError,
       recovery: options.recovery ? { ready: recoveryLoaded, loading: !recoveryLoaded && !!recoveryLoad, saving: recoverySaving > 0,
-        error: recoveryError, intent: sendIntent, canConfirmReview: !!sendIntent && recoveryReviewed && !sending && recoverySaving === 0 && !checkingOutcome,
-        checkingOutcome } : undefined,
+        error: recoveryError, intent: sendIntent, canConfirmReview: !!sendIntent && recoveryReviewed && !recoveryInvalid && !invalidDiscardPending && !invalidReview && !reviewingInvalid && !discardingInvalid && !sending && recoverySaving === 0 && !checkingOutcome,
+        checkingOutcome, canReviewInvalid: active(authority) && !recoveryRetired && recoveryInvalid && !!options.recovery.reviewInvalid && !!options.recovery.load && !!options.readRecoveryOutcome && !sending && recoverySaving === 0 && !recoveryLoad && !checkingOutcome && !confirmingIntent && !reviewingInvalid && !discardingInvalid && !invalidReview && !pendingUploads(),
+        reviewingInvalid, discardingInvalid, invalidReview: !!invalidReview, discardPending: invalidDiscardPending } : undefined,
       ...(replyTarget ? { replyAudienceNeedsChoice: !audienceConfirmed, replyContextChanged: !!previousReplyTarget } : {}),
       canSubmit:
         !previousReplyTarget &&
-        (!options.recovery || (recoveryLoaded && !recoveryRetired && !recoveryError && !sendIntent && !confirmingIntent)) &&
+        (!options.recovery || (recoveryLoaded && !recoveryRetired && !recoveryError && !sendIntent && !confirmingIntent && !invalidDiscardPending && !invalidReview && !reviewingInvalid && !discardingInvalid)) &&
         audienceConfirmed &&
         canSubmitMobileText({
           value: content,
@@ -126,6 +131,7 @@ export function createFeedController(options: {
   function publish() {
     if (active(authority)) options.onChange?.(getState());
   }
+  function pendingUploads() { return Array.from(attachments.values()).some(entry => entry.view.phase === "queued" || entry.view.phase === "uploading"); }
 
   function recoverySnapshot(): FeedRecoverySnapshot {
     const saved: FeedRecoveryAttachment[] = Array.from(attachments.values(), entry => entry.uploaded
@@ -136,7 +142,29 @@ export function createFeedController(options: {
       ...(replyTarget ? { reply: { target: { ...(previousReplyTarget ?? replyTarget) }, audienceConfirmed } } : {}),
       ...(sendIntent && sendIntent.id !== confirmingIntent ? { intent: { ...sendIntent, media: sendIntent.media.map(item => ({ ...item })) } } : {}) };
   }
+  function adoptRecovery(saved: FeedRecoverySnapshot | null) {
+    if (saved) {
+      if (replyTarget ? !saved.reply || saved.reply.target.apId !== replyTarget.apId : !!saved.reply) {
+        throw new Error("保存した下書きと現在の返信先設定が一致しません。");
+      }
+      if (saved.reply && replyTarget && (saved.reply.target.visibility !== replyTarget.visibility ||
+        saved.reply.target.communityApId !== replyTarget.communityApId)) previousReplyTarget = { ...saved.reply.target };
+      if (draftRevision === 0) { content = saved.content; visibility = saved.visibility; }
+      if (saved.reply) audienceConfirmed = saved.reply.audienceConfirmed;
+      for (const item of saved.attachments) {
+        const uploaded = item.phase === "ready" ? { ...item.upload } : undefined;
+        const view: FeedAttachment = { id: ++nextAttachmentId, name: uploaded?.name ?? (item.phase === "reselect" ? item.name : "添付"),
+          contentType: uploaded?.content_type ?? (item.phase === "reselect" ? item.contentType : ""), previewUrl: "",
+          phase: uploaded ? "ready" : "reselect", ...(uploaded ? {} : { error: "元のファイルを再選択してください。" }) };
+        attachments.set(view.id, { uploaded, view });
+      }
+      sendIntent = saved.intent ? { ...saved.intent, phase: "uncertain" } : undefined;
+      if (sendIntent) error = replyTarget ? "再起動前の返信結果は未確認です。再送する前に元の内容と返信一覧を確認してください。"
+        : "再起動前の投稿結果は未確認です。元の内容とフィードを確認してください。";
+    }
+  }
   function restoreRecovery(): Promise<void> {
+    if (invalidDiscardPending) return finishInvalidDiscard().then(() => {});
     if (recoveryLoaded || !options.recovery?.load || recoveryRetired || !active(authority)) return Promise.resolve();
     if (recoveryLoad) return recoveryLoad;
     const expected = authority;
@@ -145,27 +173,14 @@ export function createFeedController(options: {
       try {
         const saved = await options.recovery!.load!();
         if (!active(expected) || recoveryRetired) return;
-        if (saved) {
-          if (replyTarget ? !saved.reply || saved.reply.target.apId !== replyTarget.apId : !!saved.reply) {
-            throw new Error("保存した下書きと現在の返信先設定が一致しません。");
-          }
-          if (saved.reply && replyTarget && (saved.reply.target.visibility !== replyTarget.visibility ||
-            saved.reply.target.communityApId !== replyTarget.communityApId)) previousReplyTarget = { ...saved.reply.target };
-          if (draftRevision === 0) { content = saved.content; visibility = saved.visibility; }
-          if (saved.reply) audienceConfirmed = saved.reply.audienceConfirmed;
-          for (const item of saved.attachments) {
-            const uploaded = item.phase === "ready" ? { ...item.upload } : undefined;
-            const view: FeedAttachment = { id: ++nextAttachmentId, name: uploaded?.name ?? (item.phase === "reselect" ? item.name : "添付"),
-              contentType: uploaded?.content_type ?? (item.phase === "reselect" ? item.contentType : ""), previewUrl: "",
-              phase: uploaded ? "ready" : "reselect", ...(uploaded ? {} : { error: "元のファイルを再選択してください。" }) };
-            attachments.set(view.id, { uploaded, view });
-          }
-          sendIntent = saved.intent ? { ...saved.intent, phase: "uncertain" } : undefined;
-          if (sendIntent) error = replyTarget ? "再起動前の返信結果は未確認です。再送する前に元の内容と返信一覧を確認してください。"
-            : "再起動前の投稿結果は未確認です。元の内容とフィードを確認してください。";
+        adoptRecovery(saved);
+        recoveryLoaded = true; recoveryInvalid = false;
+      } catch (cause) {
+        if (active(expected)) {
+          recoveryInvalid = cause instanceof FeedRecoveryError && cause.code === "invalid-data";
+          recoveryError = "保存した投稿下書きを確認できませんでした。再確認するまで保存・送信を待機します。";
         }
-        recoveryLoaded = true;
-      } catch { if (active(expected)) recoveryError = "保存した投稿下書きを確認できませんでした。再確認するまで保存・送信を待機します。"; }
+      }
       finally { if (active(expected)) { recoveryLoad = undefined; publish(); } }
     })();
     publish(); return recoveryLoad;
@@ -183,22 +198,31 @@ export function createFeedController(options: {
   }
   async function persistRecovery(): Promise<boolean> {
     clearTimeout(recoveryTimer); recoveryTimer = undefined;
-    if (!options.recovery || recoveryRetired || !active(authority)) return false;
+    if (!options.recovery || recoveryRetired || !active(authority) || reviewingInvalid || discardingInvalid) return false;
+    if (invalidDiscardPending && !await finishInvalidDiscard()) return false;
     if (!recoveryLoaded) await restoreRecovery();
     if (!recoveryLoaded || recoveryRetired || !active(authority)) return false;
     const expected = authority; recoverySaving++; publish();
-    try { await checkpointRecovery(expected); if (active(expected)) recoveryError = ""; return active(expected); }
-    catch { if (active(expected)) recoveryError = "投稿下書きの保存を確認できませんでした。保存を再試行してください。"; return false; }
+    try { await checkpointRecovery(expected); if (active(expected)) { recoveryError = ""; recoveryInvalid = false; } return active(expected); }
+    catch (cause) {
+      if (active(expected)) {
+        recoveryInvalid ||= cause instanceof FeedRecoveryError && cause.code === "invalid-data";
+        recoveryError = "投稿下書きの保存を確認できませんでした。保存を再試行してください。";
+      }
+      return false;
+    }
     finally { recoverySaving--; publish(); }
   }
   async function flushRecovery() { await persistRecovery(); }
   function changedRecovery() {
     recoveryRevision++;
+    invalidReview = undefined;
     if (!options.recovery || !recoveryLoaded || recoveryRetired || recoveryError || !active(authority)) return;
     clearTimeout(recoveryTimer); recoveryTimer = setTimeout(() => { recoveryTimer = undefined; void flushRecovery(); }, 150);
   }
   async function reviewRecoveryOutcome() {
-    if (!sendIntent || !options.readRecoveryOutcome || checkingOutcome || sending || !active(authority) || recoveryRetired) return;
+    if (invalidDiscardPending) { await finishInvalidDiscard(); return; }
+    if (!sendIntent || !options.readRecoveryOutcome || checkingOutcome || sending || !active(authority) || recoveryRetired || reviewingInvalid || discardingInvalid || invalidReview) return;
     const expected = authority, id = sendIntent.id; checkingOutcome = true; recoveryReviewed = false; publish();
     try { await options.readRecoveryOutcome(); if (active(expected) && sendIntent?.id === id) recoveryReviewed = true; }
     catch { if (active(expected)) recoveryError = replyTarget ? "返信一覧を確認できませんでした。下書きと元の返信内容は保持しています。"
@@ -223,6 +247,70 @@ export function createFeedController(options: {
     audienceConfirmed = replyTarget.visibility !== "followers";
     draftRevision++; changedRecovery();
     await persistRecovery(); publish();
+  }
+
+  async function reviewInvalidRecovery() {
+    if (!getState().recovery?.canReviewInvalid || !options.recovery?.reviewInvalid) return;
+    const port = options.recovery, expected = authority, revision = recoveryRevision, epoch = ++invalidReviewEpoch;
+    reviewingInvalid = true; publish();
+    try {
+      if (!active(expected) || recoveryRetired || options.recovery !== port) return;
+      const value = await port.reviewInvalid!();
+      if (active(expected) && !recoveryRetired && options.recovery === port && recoveryRevision === revision && invalidReviewEpoch === epoch)
+        invalidReview = { value, port, authority: expected, revision };
+    } catch {
+      if (active(expected)) recoveryError = "下書きの保存範囲・破損内容を確認できませんでした。破棄せず再確認してください。";
+    } finally { reviewingInvalid = false; publish(); }
+  }
+  async function discardInvalidRecovery() {
+    const review = invalidReview;
+    if (!review || !active(review.authority) || recoveryRetired || options.recovery !== review.port || sending || recoverySaving || checkingOutcome || confirmingIntent || reviewingInvalid || discardingInvalid || pendingUploads()) return;
+    invalidReview = undefined;
+    if (review.revision !== recoveryRevision) { publish(); return; }
+    invalidDiscardPending = true; recoveryReviewed = false; discardingInvalid = true; publish();
+    try {
+      if (!active(review.authority) || recoveryRetired || options.recovery !== review.port) return;
+      await review.value.discard();
+      if (!active(review.authority) || recoveryRetired || options.recovery !== review.port) return;
+      discardingInvalid = false;
+      await finishInvalidDiscard();
+    } catch {
+      if (active(review.authority)) recoveryError = "下書き保存の破棄を確認できませんでした。入力を保持し、保存・送信の待機を続けます。再確認してください。";
+    } finally { discardingInvalid = false; publish(); }
+  }
+  function finishInvalidDiscard(): Promise<boolean> {
+    if (invalidResolution) return invalidResolution;
+    const port = options.recovery, expected = authority;
+    if (!invalidDiscardPending || !port?.load || !options.readRecoveryOutcome || !active(expected) || recoveryRetired || sending || recoverySaving || reviewingInvalid || discardingInvalid || checkingOutcome) return Promise.resolve(false);
+    checkingOutcome = true; recoveryReviewed = false; publish();
+    invalidResolution = Promise.resolve().then(async () => {
+      try {
+        if (!active(expected) || recoveryRetired || options.recovery !== port) return false;
+        const saved = await port.load!();
+        if (!active(expected) || recoveryRetired || options.recovery !== port) return false;
+        // Preserve both live input and a different valid stored record.
+        if (recoveryLoaded && saved !== null) throw new FeedRecoveryError("changed");
+        recoveryInvalid = false;
+        await options.readRecoveryOutcome!();
+        if (!active(expected) || recoveryRetired || options.recovery !== port) return false;
+        if (!recoveryLoaded) adoptRecovery(saved);
+        recoveryLoaded = true;
+        invalidDiscardPending = false; recoveryError = "";
+        recoveryReviewed = !!sendIntent;
+        if (content || attachments.size || sendIntent) changedRecovery();
+        return true;
+      } catch (cause) {
+        if (active(expected)) recoveryError = cause instanceof FeedRecoveryError && cause.code === "changed"
+          ? "別の下書きが保存されています。この画面の入力を保持して上書きを止めました。保存側を使う場合は入力を控えてからアプリを開き直してください。"
+          : "破棄後の保存先または現在の投稿結果を確認できませんでした。入力を保持し、送信を待機します。再確認してください。";
+        return false;
+      } finally { checkingOutcome = false; invalidResolution = undefined; publish(); }
+    });
+    return invalidResolution;
+  }
+  function cancelInvalidRecoveryReview() {
+    if (discardingInvalid) return;
+    invalidReview = undefined; invalidReviewEpoch++; publish();
   }
 
   function setDraft(value: string) {
@@ -328,7 +416,7 @@ export function createFeedController(options: {
   }
 
   function addFiles(files: readonly File[]): Promise<void> {
-    if (!active(authority) || !recoveryLoaded || !files.length) return Promise.resolve();
+    if (!active(authority) || !recoveryLoaded || !files.length || reviewingInvalid || discardingInvalid || invalidDiscardPending) return Promise.resolve();
     if (attachments.size + files.length > MAX_MOBILE_ATTACHMENTS) {
       attachmentError = `添付は${MAX_MOBILE_ATTACHMENTS}件までです。`;
       publish();
@@ -370,7 +458,7 @@ export function createFeedController(options: {
   }
 
   function retryAttachment(id: number): Promise<void> {
-    if (!active(authority)) return Promise.resolve();
+    if (!active(authority) || reviewingInvalid || discardingInvalid || invalidDiscardPending) return Promise.resolve();
     const entry = attachments.get(id);
     if (!entry || entry.view.phase !== "error" || !entry.file) return Promise.resolve();
     entry.view = { ...entry.view, phase: "queued", error: undefined };
@@ -510,6 +598,7 @@ export function createFeedController(options: {
   // requests, not content; abort is never a promise of server-side rollback.
   function pause() {
     if (disposed) return;
+    invalidReview = undefined; recoveryReviewed = false;
     const wasSending = sending;
     authority += 1;
     if (!recoveryLoaded) recoveryLoad = undefined;
@@ -571,6 +660,7 @@ export function createFeedController(options: {
     session = snapshotFeedSession(next);
     if (key === sessionKey) return;
     sessionKey = key;
+    invalidReview = undefined; invalidReviewEpoch++; invalidDiscardPending = false;
     clearTimeout(recoveryTimer); recoveryTimer = undefined; recoveryRetired = !!options.recovery;
     sendIntent = undefined; recoveryReviewed = false; recoveryError = "";
     authority += 1;
@@ -596,6 +686,7 @@ export function createFeedController(options: {
     if (options.recovery && recoveryLoaded && !recoveryRetired && !recoveryError && savedRecoveryRevision !== recoveryRevision) void flushRecovery();
     clearTimeout(recoveryTimer); recoveryTimer = undefined;
     disposed = true;
+    invalidReview = undefined; invalidReviewEpoch++;
     postAbort?.abort();
     postAbort = undefined;
     clearAttachments();
@@ -609,6 +700,7 @@ export function createFeedController(options: {
   return {
     getState,
     restoreRecovery, flushRecovery, reviewRecoveryOutcome, confirmRecoveryReview, confirmReplyContext,
+    reviewInvalidRecovery, discardInvalidRecovery, cancelInvalidRecoveryReview,
     setDraft,
     setVisibility,
     clearDraft,
