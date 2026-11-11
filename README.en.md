@@ -12,6 +12,16 @@ Post attachments are available in the feed, saved posts and notification post vi
 
 The composer accepts up to eight images/videos with a caption, preserving the server's required-text contract. SDK-validated files upload serially with queued, uploading, ready and failed states. Original Unicode filenames remain in the UI/post metadata. Retry is explicit; uncertain upload/post responses never trigger automatic resends and retain the draft. Expired staged uploads must be uploaded again. An accepted post retires only its submitted files, preserving newer edits and files. Clear, account changes and disposal abort pending reads and ignore late responses. Removing a draft attachment does not delete server media; the existing server retention/cleanup lifecycle owns unused uploads. Native file selection, real-server authorization/upload and device behavior still require separate qualification.
 
+Ordinary home-feed drafts are saved through the existing secure storage after a 150 ms input pause and restored for the same saved account after restart.
+The namespace separates host, random saved row, verified home actor and API; credentials, file bytes and blob URLs are not copied to ordinary preferences.
+Drafts remain until explicit clear or account removal. The last input can be lost if termination precedes its completed write.
+Valid upload references restore without another upload; expired or unfinished files require reselection. The original attempted post is saved before POST, and a failed checkpoint blocks dispatch.
+An interrupted or unknown post retains its original body, visibility and media separately from newer input. Restoration never automatically resends it.
+Read the current actor/feed through the canonical API, then explicitly confirm review to allow the next post; this creates no delivery ACK.
+A confirmed post and a failed final draft checkpoint remain distinct. Clear removes the current unsent draft while preserving any unreviewed original intent.
+Unreadable data is preserved and blocks saving/posting until explicit recovery. Actual saved-row removal retires only that row, with durable cleanup retry when intent recording succeeded; absence from metadata alone is insufficient.
+Reply/profile drafts remain a separate unfinished recovery path. Real Stronghold/OS termination, signing, device update/rollback and legitimate server/SSO qualification are not established by these source/local checks.
+
 日本語: [README.md](README.md)
 
 Yurucommu is software each owner deploys for personal use. The mobile client connects to that owner's server;

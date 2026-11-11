@@ -5,6 +5,7 @@ import {
   createSignal,
   For,
   onCleanup,
+  onMount,
   Show,
   untrack,
 } from "solid-js";
@@ -19,10 +20,12 @@ import {
   MobilePreviewSection,
 } from "@takosjp/mobile-kit/solid";
 import {
+  loadHome,
   loadYurucommuMobileBookmarksPage,
   type MobilePost,
   type YurucommuMobileHome,
 } from "./api.ts";
+import type { FeedRecoveryPort } from "./feed-recovery.ts";
 import { createFeedController, type FeedState } from "./feed-controller.ts";
 import { createFeedTimelineController, type FeedTimelineState } from "./feed-timeline-controller.ts";
 import { PostComposer } from "./post-composer.tsx";
@@ -66,6 +69,7 @@ export function HostRouteNoticeBanner(props: {
 }
 
 export function Feed(props: {
+  recovery?: FeedRecoveryPort;
   home?: YurucommuMobileHome;
   session: MobileSession;
   isActive?: () => boolean;
@@ -87,12 +91,21 @@ export function Feed(props: {
     attachmentError: "",
     canSubmit: false,
   });
+  const recoveryActor = props.home?.actor.ap_id;
   const controller = createFeedController({
-    session: props.session,
+    session: props.session, recovery: props.recovery,
     refreshHome: () => props.refreshHome(),
+    readRecoveryOutcome: async () => {
+      const selected = snapshotFeedSession(props.session);
+      const home = await loadHome(selected);
+      if (!recoveryActor || home.actor.ap_id !== recoveryActor || props.isActive?.() === false ||
+        feedSessionIdentity(props.session) !== feedSessionIdentity(selected)) throw new Error("投稿結果を確認する本人を確認できませんでした。");
+      pager.updateHome(selected, home);
+    },
     isActive: () => props.isActive?.() !== false,
     onChange: setState,
   });
+  onMount(() => { void controller.restoreRecovery(); });
   createRenderEffect(() => controller.updateSession(props.session));
   onCleanup(() => controller.dispose());
   const [timeline, setTimeline] = createSignal<FeedTimelineState>({ posts: [], loading: false, error: "", status: "", continuationKnown: false, hasMore: false, canLoadMore: false });

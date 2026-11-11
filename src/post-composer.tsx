@@ -36,6 +36,24 @@ export function PostComposer(props: {
   );
   return (
     <MobileComposeSection title={props.reply ? "返信する" : "投稿する"}>
+      <Show when={props.state.recovery}>{recovery => <>
+        <Show when={recovery().loading || recovery().saving}><p role="status">{recovery().loading ? "保存した投稿下書きを確認中…" : "投稿下書きを保存中…"}</p></Show>
+        <Show when={recovery().error}><div role="alert"><p>{recovery().error}</p>
+          <button type="button" class="text-button" disabled={recovery().loading || recovery().saving}
+            onClick={() => void props.controller.flushRecovery()}>投稿下書きの確認・保存を再試行</button>
+        </div></Show>
+        <Show when={recovery().intent}>{intent => <div role="status">
+          <p>元の投稿結果は未確認です。復元だけでは再送しません。</p>
+          <p style={{ "white-space": "pre-wrap" }}>{intent().content}</p>
+          <p>元の公開範囲: {intent().visibility}</p>
+          <For each={intent().media}>{media => <p>{media.name}</p>}</For>
+          <button type="button" class="text-button" disabled={recovery().checkingOutcome || props.state.sending}
+            onClick={() => void props.controller.reviewRecoveryOutcome()}>フィードで投稿結果を確認</button>
+          <button type="button" class="text-button" disabled={!recovery().canConfirmReview}
+            onClick={() => void props.controller.confirmRecoveryReview()}>元の内容を確認した・次の投稿を許可</button>
+          <small>この操作は配達の確定ではなく、自動再送もしません。</small>
+        </div>}</Show>
+      </>}</Show>
       <MobileComposeForm
         onSubmit={(event) => {
           event.preventDefault();
@@ -47,6 +65,7 @@ export function PostComposer(props: {
         >
           <textarea
             maxlength={500}
+            disabled={!!props.state.recovery && !props.state.recovery.ready}
             value={content()}
             placeholder={props.reply ? "返信を書く" : "近況をシェア"}
             onInput={(event) =>
@@ -69,7 +88,7 @@ export function PostComposer(props: {
               aria-label="画像・動画を添付"
               accept={allowedMimeTypes.join(",")}
               disabled={
-                props.state.attachments.length >= MAX_MOBILE_ATTACHMENTS
+                props.state.attachments.length >= MAX_MOBILE_ATTACHMENTS || (!!props.state.recovery && !props.state.recovery.ready)
               }
               onChange={(event) => {
                 const files = Array.from(event.currentTarget.files ?? []);
@@ -96,6 +115,7 @@ export function PostComposer(props: {
                 >
                   {(item) => (
                     <li>
+                      <Show when={item().previewUrl} fallback={<p>保存した添付: {item().name}</p>}>
                       <Show
                         when={item().contentType.startsWith("video/")}
                         fallback={
@@ -110,6 +130,7 @@ export function PostComposer(props: {
                           aria-label={item().name}
                         />
                       </Show>
+                      </Show>
                       <p>{item().name}</p>
                       <p role="status">
                         {
@@ -118,6 +139,7 @@ export function PostComposer(props: {
                             uploading: "アップロード中",
                             ready: "アップロード済み",
                             error: "アップロード失敗",
+                            reselect: "元のファイルを再選択",
                           }[item().phase]
                         }
                       </p>
@@ -125,7 +147,7 @@ export function PostComposer(props: {
                         {(message) => <p role="alert">{message()}</p>}
                       </Show>
                       <div class="composer-attachment-actions">
-                        <Show when={item().phase === "error"}>
+                        <Show when={item().phase === "error" && !!item().previewUrl}>
                           <button
                             type="button"
                             class="secondary"
@@ -220,6 +242,7 @@ export function PostComposer(props: {
         >
           <MobileSegmentedControl
             ariaLabel="公開範囲"
+            disabled={!!props.state.recovery && !props.state.recovery.ready}
             value={visibility()}
             options={[
               { value: "public", label: "公開" },
