@@ -13,8 +13,11 @@ export interface ProfileRecoverySnapshot {
     { readonly phase: "ready"; readonly name: string; readonly upload: MobileUploadedAttachment } |
     { readonly phase: "reselect"; readonly name: string }>>;
 }
+export interface ProfileInvalidRecoveryReview {
+  discard: () => Promise<void>;
+}
 export class ProfileRecoveryError extends Error {
-  constructor(readonly code: "invalid-scope" | "invalid-data" | "storage" | "secure-store-unavailable", options?: ErrorOptions) {
+  constructor(readonly code: "invalid-scope" | "invalid-data" | "changed" | "storage" | "secure-store-unavailable", options?: ErrorOptions) {
     super("Profile recovery: " + code, options); this.name = "ProfileRecoveryError";
   }
 }
@@ -107,13 +110,21 @@ export function createProfileRecoveryStore(options: { store: MobileSecureStore; 
   function queued<T>(work: () => Promise<T>) {
     const next = (queues.get(store) ?? Promise.resolve()).then(work); queues.set(store, next.then(() => {}, () => {})); return next;
   }
-  function decode(raw: string, owner: string) {
+  function header(raw: string, owner: string) {
     try {
       bounded(raw, 256 * 1024); const value: unknown = JSON.parse(raw);
       if (!object(value, ["version", "scope", "savedAt", "data"]) || value.version !== 1 || value.scope !== owner ||
         !Number.isSafeInteger(value.savedAt) || (value.savedAt as number) < 0 || (value.savedAt as number) > Date.now()) throw new Error();
-      return snapshot(value.data, scope.hostUrl);
+      return value.data;
     } catch { throw new ProfileRecoveryError("invalid-data"); }
+  }
+  function decode(raw: string, owner: string) { return snapshot(header(raw, owner), scope.hostUrl); }
+  function verifyInvalidContents(raw: string, owner: string) {
+    const data = header(raw, owner);
+    // Only identifiable current-scope contents can authorize this local discard.
+    try { snapshot(data, scope.hostUrl); }
+    catch (cause) { if (cause instanceof ProfileRecoveryError && cause.code === "invalid-data") return; throw cause; }
+    throw new ProfileRecoveryError("changed");
   }
   return {
     scope,
@@ -132,6 +143,20 @@ export function createProfileRecoveryStore(options: { store: MobileSecureStore; 
         } catch (cause) { if (cause instanceof ProfileRecoveryError) throw cause; throw new ProfileRecoveryError("storage", { cause }); }
       });
     },
+    reviewInvalid: () => queued(async (): Promise<ProfileInvalidRecoveryReview> => {
+      try {
+        const owner = await storageKey(), raw = await store.get(owner);
+        if (raw === undefined) throw new ProfileRecoveryError("changed");
+        verifyInvalidContents(raw, owner);
+        return { discard: () => queued(async () => {
+          try {
+            if (await store.get(owner) !== raw) throw new ProfileRecoveryError("changed");
+            verifyInvalidContents(raw, owner);
+            await store.delete(owner);
+          } catch (cause) { if (cause instanceof ProfileRecoveryError) throw cause; throw new ProfileRecoveryError("storage", { cause }); }
+        }) };
+      } catch (cause) { if (cause instanceof ProfileRecoveryError) throw cause; throw new ProfileRecoveryError("storage", { cause }); }
+    }),
   };
 }
 export type ProfileRecoveryPort = ReturnType<typeof createProfileRecoveryStore>;

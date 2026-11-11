@@ -10,7 +10,7 @@ function fixture() {
   const values = new Map<string, string>(), bodies: unknown[] = [];
   let canonical = { content: "Canonical body", summary: "Canonical warning" };
   let failGet = false, failDelete = false, loseDeleteAck = false, unknown = false, failRead = false;
-  let mutations = 0;
+  let mutations = 0, reads = 0;
   let heldDelete: { enter: () => void; release: Promise<void> } | undefined;
   let heldGet: { enter: () => void; release: Promise<void> } | undefined;
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request): Promise<Response> {
@@ -27,6 +27,7 @@ function fixture() {
   const scope: PostEditRecoveryScope = { product: "yurucommu", hostUrl: session.hostUrl, actorApId: session.hostUrl + "/users/me", postApId: session.hostUrl + "/posts/own", view: "post" };
   const store: MobileSecureStore = { kind: "secure",
     async get(key) {
+      reads++;
       if (failGet) throw new Error("synthetic storage read failure");
       const raw = values.get(key);
       if (heldGet) { const held = heldGet; heldGet = undefined; held.enter(); await held.release; }
@@ -46,9 +47,9 @@ function fixture() {
     values.set(key, JSON.stringify({ ...data, data: { ...data.data, draft: { ...data.data.draft, content: 123 } } }));
     return key;
   }
-  return { values, bodies, session, scope, store, port, corrupt, mutations: () => mutations,
+  return { values, bodies, session, scope, store, port, corrupt, mutations: () => mutations, reads: () => reads,
     async seed() { await port().save({ base: { ...canonical }, draft: { ...canonical, content: "保存した投稿編集" } }); return corrupt(); },
-    async open() { const c = createPostEditController({ session, postId: scope.postApId, authorId: scope.actorApId, recovery: port, confirmDiscard: () => true }); controllers.push(c); await c.show(); return c; },
+    async open(onChange?: () => void) { const c = createPostEditController({ session, postId: scope.postApId, authorId: scope.actorApId, recovery: port, confirmDiscard: () => true, onChange }); controllers.push(c); await c.show(); return c; },
     failGet: (value: boolean) => { failGet = value; }, failDelete: (value: boolean) => { failDelete = value; },
     loseDeleteAck: (value: boolean) => { loseDeleteAck = value; }, unknown: (value: boolean) => { unknown = value; },
     failRead: (value: boolean) => { failRead = value; },
@@ -73,6 +74,20 @@ test("the actual editor recovers identifiable corrupt saved contents only throug
     expect(f.values.has(key)).toBe(false); expect(f.bodies).toHaveLength(0);
     c.setField("content", "復帰して保存する本文"); await c.save();
     expect(f.bodies).toEqual([{ content: "復帰して保存する本文" }]);
+  } finally { await f.close(); }
+});
+
+for (const action of ["review", "discard"] as const) test(`post-edit retirement during ${action} publication prevents private storage dispatch`, async () => {
+  const f = fixture(); let armed = false, c: Awaited<ReturnType<typeof f.open>> | undefined;
+  try {
+    const key = await f.seed(), raw = f.values.get(key), before = f.mutations();
+    c = await f.open(() => {
+      if (armed && (action === "review" ? c?.getState().recovery?.reviewingInvalid : c?.getState().recovery?.discardingInvalid)) { armed = false; c?.pause(); }
+    });
+    if (action === "discard") await c.reviewInvalidRecovery();
+    const reads = f.reads(); armed = true;
+    if (action === "review") await c.reviewInvalidRecovery(); else await c.discardInvalidRecovery();
+    expect({ visible: c.getState().visible, reads: f.reads(), raw: f.values.get(key), mutations: f.mutations(), bodies: f.bodies }).toEqual({ visible: false, reads, raw, mutations: before, bodies: [] });
   } finally { await f.close(); }
 });
 

@@ -11,7 +11,7 @@ import {
   type MobileProfilePatch,
 } from "./profile-edit-api.ts";
 import type { MobileProfile } from "./profile-api.ts";
-import type { ProfileRecoveryPort, ProfileRecoverySnapshot } from "./profile-recovery.ts";
+import { ProfileRecoveryError, type ProfileRecoveryPort, type ProfileRecoverySnapshot, type ProfileInvalidRecoveryReview } from "./profile-recovery.ts";
 type ImageKey = "icon_url" | "header_url";
 interface Upload {
   name: string;
@@ -48,6 +48,8 @@ export function createProfileEditController(options: {
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
   let recoveryReviewBase: MobileProfileForm | undefined, recoveryReviewed = false, confirmingRecovery = false;
   let recoveryConflicts: (keyof MobileProfileForm)[] = [];
+  let recoveryInvalid = false, reviewingInvalid = false, discardingInvalid = false, invalidReviewEpoch = 0;
+  let invalidReview: { value: ProfileInvalidRecoveryReview; port: ProfileRecoveryPort; owner: number; revision: number } | undefined;
   const fieldVersions = Object.fromEntries(
     profileFormKeys.map((key) => [key, 0]),
   ) as Record<keyof MobileProfileForm, number>;
@@ -124,9 +126,11 @@ export function createProfileEditController(options: {
         attempted: attempted ? { draft: copy(attempted.draft), patch: { ...attempted.patch,
           ...(attempted.patch.fields ? { fields: attempted.patch.fields.map(row => ({ ...row })) } : {}) } } : undefined,
         conflicts: [...recoveryConflicts], current: base ? profileForm(base) : undefined,
-        canConfirmReview: (!!attempted || !!recoveryConflicts.length) && recoveryReviewed && !loading && !saving && !recoverySaving && !confirmingRecovery } : undefined,
+        canConfirmReview: (!!attempted || !!recoveryConflicts.length) && recoveryReviewed && !loading && !saving && !recoverySaving && !confirmingRecovery && !reviewingInvalid && !discardingInvalid && !invalidReview,
+        canReviewInvalid: live() && recoveryInvalid && !!recoveryPort && !loading && !saving && !imageBusy() && !recoverySaving && !confirmingRecovery && !reviewingInvalid && !discardingInvalid && !invalidReview,
+        reviewingInvalid, discardingInvalid, invalidReview: !!invalidReview } : undefined,
       canSave:
-        (recoveryLoaded && !recoveryError && !confirmingRecovery && !recoverySaving) &&
+        (recoveryLoaded && !recoveryError && !confirmingRecovery && !recoverySaving && !reviewingInvalid && !discardingInvalid && !invalidReview) &&
         live() &&
         !!base &&
         !loading &&
@@ -136,7 +140,7 @@ export function createProfileEditController(options: {
         !needsReload &&
         !validation &&
         Object.keys(changes).length > 0,
-      busy: loading || saving || imageBusy(),
+      busy: loading || saving || imageBusy() || reviewingInvalid || discardingInvalid,
     };
   }
   function stopImages() {
@@ -154,7 +158,8 @@ export function createProfileEditController(options: {
   }
   function pause() {
     recoveryReviewed = false;
-    if (recoveryLoaded && savedRecoveryRevision !== recoveryRevision) void flushRecovery();
+    invalidReview = undefined;
+    if (recoveryLoaded && !recoveryInvalid && savedRecoveryRevision !== recoveryRevision) void flushRecovery();
     clearTimeout(recoveryTimer); recoveryTimer = undefined;
     generation++;
     pending?.abort();
@@ -212,13 +217,14 @@ export function createProfileEditController(options: {
     }
   }
   async function read(reset = false): Promise<boolean> {
-    if (!live() || !actorId || loading || saving || imageBusy()) return false;
+    if (!live() || !actorId || loading || saving || imageBusy() || reviewingInvalid || discardingInvalid) return false;
     const resetVersions = reset ? { ...fieldVersions } : undefined;
     const owner = ++generation,
       abort = new AbortController(),
       recovering = uncertain;
     pending = abort;
     loading = true;
+    invalidReview = undefined;
     if (options.recovery) recoveryReviewed = false;
     error = "";
     message = "";
@@ -237,10 +243,12 @@ export function createProfileEditController(options: {
       let restoredSaved = false;
       if (firstRecoveryRead) {
         try {
-          recoveryPort ??= options.recovery!();
-          if (recoveryPort.actorApId !== actorId || recoveryPort.scope.hostUrl !== normalizeHostUrl(session.hostUrl) ||
-            recoveryPort.scope.apiBaseUrl !== session.apiBaseUrl || recoveryPort.scope.product !== session.product) throw new Error("保存先の本人・接続先が一致しません。");
-          const saved = await recoveryPort.load(); if (!current(owner)) return false;
+          recoveryPort = undefined;
+          const port = options.recovery!();
+          if (port.actorApId !== actorId || port.scope.hostUrl !== normalizeHostUrl(session.hostUrl) ||
+            port.scope.apiBaseUrl !== session.apiBaseUrl || port.scope.product !== session.product) throw new Error("保存先の本人・接続先が一致しません。");
+          recoveryPort = port;
+          const saved = await port.load(); if (!current(owner)) return false;
           restoredSaved = !!saved;
           base = actor; draft = profileForm(actor);
           if (saved) for (const key of profileFormKeys) {
@@ -255,9 +263,23 @@ export function createProfileEditController(options: {
               uploaded[key] = { ...image.upload }; uploads[key] = { phase: "ready", name: image.name, error: "" };
             } else uploads[key] = { phase: "reselect", name: image.name, error: "元の画像を再選択するか、画像の選択を取り消してください。" };
           }
-          recoveryLoaded = true; recoveryError = "";
-        } catch (cause) { if (current(owner)) recoveryError = "保存したプロフィール入力を確認できませんでした。再確認まで保存を待機します。"; throw cause; }
-      } else merge(actor, resetVersions);
+          recoveryLoaded = true; recoveryError = ""; recoveryInvalid = false;
+        } catch (cause) {
+          if (current(owner)) {
+            recoveryInvalid = cause instanceof ProfileRecoveryError && cause.code === "invalid-data";
+            recoveryError = "保存したプロフィール入力を確認できませんでした。再確認まで保存を待機します。";
+          }
+          throw cause;
+        }
+      } else {
+        if (recoveryInvalid && recoveryPort) {
+          const saved = await recoveryPort.load(); if (!current(owner)) return false;
+          // Resolve a lost delete ACK without overwriting a different valid record.
+          if (saved !== null) throw new ProfileRecoveryError("changed");
+          recoveryInvalid = false; recoveryError = "";
+        }
+        merge(actor, resetVersions);
+      }
       loading = false;
       if (options.recovery) {
         const before = recoveryReviewBase ?? previousBase, currentForm = profileForm(actor);
@@ -387,13 +409,15 @@ export function createProfileEditController(options: {
     draft = copy({ ...draft, [key]: value });
     fieldVersions[key]++;
     revision++;
+    invalidReview = undefined;
     changedRecovery();
     message = "";
     if (!needsReload && !saving && !loading) error = "";
     publish();
   }
   async function pickImage(key: ImageKey, file: File): Promise<boolean> {
-    if (!live() || !base || loading || saving) return false;
+    if (!live() || !base || loading || saving || reviewingInvalid || discardingInvalid) return false;
+    invalidReview = undefined;
     imageVersions[key]++;
     imageReads[key]?.abort();
     const owner = generation,
@@ -463,6 +487,7 @@ export function createProfileEditController(options: {
     if (recoveryLoaded && !recoveryError && savedRecoveryRevision !== recoveryRevision) void flushRecovery();
     clearTimeout(recoveryTimer); recoveryTimer = undefined;
     disposed = true;
+    invalidReview = undefined;
     generation++;
     pending?.abort();
     stopImages();
@@ -493,6 +518,9 @@ export function createProfileEditController(options: {
     discard,
     flushRecovery,
     confirmRecoveryReview,
+    reviewInvalidRecovery,
+    discardInvalidRecovery,
+    cancelInvalidRecoveryReview,
   };
 
   function changedRecovery() {
@@ -502,7 +530,7 @@ export function createProfileEditController(options: {
   }
   async function flushRecovery() {
     clearTimeout(recoveryTimer); recoveryTimer = undefined;
-    if (!options.recovery || disposed) return false;
+    if (!options.recovery || disposed || reviewingInvalid || discardingInvalid) return false;
     if (!recoveryLoaded) { await read(); if (!recoveryLoaded) return false; }
     clearTimeout(recoveryTimer); recoveryTimer = undefined;
     if (!base || !recoveryPort) return false;
@@ -523,9 +551,15 @@ export function createProfileEditController(options: {
         await recoveryPort.save(data);
         if (disposed) return false; savedRecoveryRevision = revision;
       } while (recoveryRevision !== revision);
-      recoveryError = "";
+      recoveryError = ""; recoveryInvalid = false;
       return true;
-    } catch { if (!disposed) recoveryError = "プロフィール入力の保存を確認できませんでした。保存を再試行してください。"; return false; }
+    } catch (cause) {
+      if (!disposed) {
+        recoveryInvalid ||= cause instanceof ProfileRecoveryError && cause.code === "invalid-data";
+        recoveryError = "プロフィール入力の保存を確認できませんでした。保存を再試行してください。";
+      }
+      return false;
+    }
     finally { recoverySaving--; publish(); }
   }
   async function confirmRecoveryReview() {
@@ -537,5 +571,42 @@ export function createProfileEditController(options: {
         message = "現在の保存状態と元の変更を確認しました。新しい入力はまだ保存していません。";
       }
     } finally { confirmingRecovery = false; publish(); }
+  }
+  async function reviewInvalidRecovery() {
+    if (!getState().recovery?.canReviewInvalid || !recoveryPort) return;
+    const port = recoveryPort, owner = generation, revision = recoveryRevision, epoch = ++invalidReviewEpoch;
+    reviewingInvalid = true; publish();
+    try {
+      if (!current(owner) || recoveryPort !== port) return;
+      const value = await port.reviewInvalid();
+      if (current(owner) && recoveryPort === port && recoveryRevision === revision && invalidReviewEpoch === epoch)
+        invalidReview = { value, port, owner, revision };
+    } catch {
+      if (current(owner)) recoveryError = "保存範囲・破損内容を確認できませんでした。破棄せず、プロフィール入力を再確認してください。";
+    } finally { reviewingInvalid = false; publish(); }
+  }
+  async function discardInvalidRecovery() {
+    const review = invalidReview;
+    if (!review || !current(review.owner) || recoveryPort !== review.port || getState().busy || recoverySaving || confirmingRecovery) return;
+    invalidReview = undefined;
+    if (review.revision !== recoveryRevision) {
+      recoveryError = "入力が変わったため破棄を中止しました。現在の入力を保持しています。もう一度確認してください。";
+      publish(); return;
+    }
+    discardingInvalid = true; publish();
+    try {
+      if (!current(review.owner) || recoveryPort !== review.port) return;
+      await review.value.discard();
+      if (!current(review.owner) || recoveryPort !== review.port) return;
+      recoveryInvalid = false; recoveryError = "";
+      discardingInvalid = false;
+      await read();
+    } catch {
+      if (current(review.owner)) recoveryError = "プロフィール保存の破棄を確認できませんでした。入力を保持し、保存待機を続けます。再確認してください。";
+    } finally { discardingInvalid = false; publish(); }
+  }
+  function cancelInvalidRecoveryReview() {
+    if (discardingInvalid) return;
+    invalidReview = undefined; invalidReviewEpoch++; publish();
   }
 }

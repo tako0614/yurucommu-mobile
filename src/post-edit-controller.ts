@@ -352,6 +352,7 @@ export function createPostEditController(options: {
         const port = recoveryPort, owner = generation, revision = recoveryRevision, input = { ...versions }, epoch = ++invalidReviewEpoch;
         reviewingInvalid = true; publish();
         try {
+            if (!current(owner) || recoveryPort !== port) return;
             const value = await port.reviewInvalid();
             if (current(owner) && recoveryPort === port && recoveryRevision === revision && invalidReviewEpoch === epoch)
                 invalidReview = { value, port, owner, revision, versions: input };
@@ -369,6 +370,7 @@ export function createPostEditController(options: {
         }
         discardingInvalid = true; publish();
         try {
+            if (!current(review.owner) || recoveryPort !== review.port) return;
             await review.value.discard();
             if (!current(review.owner) || recoveryPort !== review.port) return;
             recoveryInvalid = false; recoveryError = "";
