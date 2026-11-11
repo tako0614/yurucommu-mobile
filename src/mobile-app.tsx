@@ -194,7 +194,8 @@ export function createYurucommuMobileApp(
         };
         const [session, setSession] = createSignal(context.session);
         const [actions, setActions] = createSignal(context);
-        const [binding, setBinding] = createSignal<{ key: string; port: FeedRecoveryPort }>();
+        const [binding, setBinding] = createSignal<{ key: string; port: FeedRecoveryPort;
+          reply: (id: string, view: "post" | "profile") => FeedRecoveryPort }>();
         const [bindingError, setBindingError] = createSignal("");
         const [bindingRetry, setBindingRetry] = createSignal(0);
         let bindingEpoch = 0, selectedIdentity = "", selectedActor: string | undefined;
@@ -215,10 +216,20 @@ export function createYurucommuMobileApp(
               if (!row || row.product !== currentSession.product || mobileAccountIdentity(row) !== mobileAccountIdentity(currentSession)) throw new Error();
               const key = JSON.stringify([identity, row.id, actor]);
               const port = recovery().select({ accounts, session: currentSession, actorApId: actor });
-              setBinding(previous => previous?.key === key ? previous : { key, port }); setBindingError("");
+              const reply = (id: string, view: "post" | "profile") => {
+                if (feedSessionIdentity(session()) !== identity || home()?.actor.ap_id !== actor) throw new Error("返信の本人scopeが変わりました。");
+                return recovery().select({ accounts, session: currentSession, actorApId: actor, replyParentApId: id, replyView: view });
+              };
+              setBinding(previous => previous?.key === key ? previous : { key, port, reply }); setBindingError("");
             } catch { if (live && epoch === bindingEpoch) setBindingError("このアカウントの安全な投稿下書き保存先を確認できませんでした。"); }
           })();
         });
+
+        function replyRecovery(target: { apId: string }, view: "post" | "profile") {
+          const selected = binding();
+          if (!selected) throw new Error("このアカウントの返信下書き保存先を確認できません。投稿を再読み込みしてください。");
+          return selected.reply(target.apId, view);
+        }
 
         const [editRevision, setEditRevision] = createSignal(0);
         const edits = createPostEditStore({ session: context.session, onChange: () => setEditRevision(value => value + 1) });
@@ -249,6 +260,7 @@ export function createYurucommuMobileApp(
         const [bookmarkRevision, setBookmarkRevision] = createSignal(0);
         const [profileRevision, setProfileRevision] = createSignal(0);
         const profiles = createProfileController({
+          replyRecovery: target => replyRecovery(target, "profile"),
           edits,
           onPostEditReceipt: applyPostEdits,
           onPostEditSaved: () => actions().refreshHome(),
@@ -287,6 +299,7 @@ export function createYurucommuMobileApp(
         createRenderEffect(() => profiles.updateSession(session()));
         onCleanup(() => profiles.dispose());
         const notifications = createNotificationController({
+          replyRecovery: target => replyRecovery(target, "post"),
           edits,
           onPostEditReceipt: applyPostEdits,
           onPostEditSaved: () => actions().refreshHome(),

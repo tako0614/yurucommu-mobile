@@ -33,6 +33,7 @@ export interface FeedState {
   readonly attachmentError: string;
   readonly canSubmit: boolean;
   readonly replyAudienceNeedsChoice?: boolean;
+  readonly replyContextChanged?: boolean;
   readonly recovery?: { readonly ready: boolean; readonly loading: boolean; readonly saving: boolean; readonly error: string;
     readonly intent?: FeedRecoveryIntent; readonly canConfirmReview: boolean; readonly checkingOutcome: boolean };
 
@@ -50,8 +51,8 @@ export function createFeedController(options: {
   replyTo?: MobileReplyTarget & Readonly<{ visibility: FeedVisibility }>;
   recovery?: Pick<FeedRecoveryPort, "save"> & Partial<Pick<FeedRecoveryPort, "load">>;
 }) {
-  if (options.recovery && options.replyTo) throw new Error("返信には専用の回復scopeが必要です。");
   let replyTarget = options.replyTo ? { ...options.replyTo } : undefined;
+  let previousReplyTarget: typeof replyTarget;
   let session = snapshotFeedSession(options.session);
   let sessionKey = feedSessionIdentity(session);
   let authority = 0;
@@ -97,8 +98,9 @@ export function createFeedController(options: {
       recovery: options.recovery ? { ready: recoveryLoaded, loading: !recoveryLoaded && !!recoveryLoad, saving: recoverySaving > 0,
         error: recoveryError, intent: sendIntent, canConfirmReview: !!sendIntent && recoveryReviewed && !sending && recoverySaving === 0 && !checkingOutcome,
         checkingOutcome } : undefined,
-      ...(replyTarget ? { replyAudienceNeedsChoice: !audienceConfirmed } : {}),
+      ...(replyTarget ? { replyAudienceNeedsChoice: !audienceConfirmed, replyContextChanged: !!previousReplyTarget } : {}),
       canSubmit:
+        !previousReplyTarget &&
         (!options.recovery || (recoveryLoaded && !recoveryRetired && !recoveryError && !sendIntent && !confirmingIntent)) &&
         audienceConfirmed &&
         canSubmitMobileText({
@@ -131,6 +133,7 @@ export function createFeedController(options: {
       : { phase: "reselect", name: entry.view.name, contentType: entry.view.contentType,
         ...(entry.file ? { size: entry.file.size } : {}) });
     return { content, visibility, attachments: saved,
+      ...(replyTarget ? { reply: { target: { ...(previousReplyTarget ?? replyTarget) }, audienceConfirmed } } : {}),
       ...(sendIntent && sendIntent.id !== confirmingIntent ? { intent: { ...sendIntent, media: sendIntent.media.map(item => ({ ...item })) } } : {}) };
   }
   function restoreRecovery(): Promise<void> {
@@ -143,7 +146,13 @@ export function createFeedController(options: {
         const saved = await options.recovery!.load!();
         if (!active(expected) || recoveryRetired) return;
         if (saved) {
+          if (replyTarget ? !saved.reply || saved.reply.target.apId !== replyTarget.apId : !!saved.reply) {
+            throw new Error("保存した下書きと現在の返信先設定が一致しません。");
+          }
+          if (saved.reply && replyTarget && (saved.reply.target.visibility !== replyTarget.visibility ||
+            saved.reply.target.communityApId !== replyTarget.communityApId)) previousReplyTarget = { ...saved.reply.target };
           if (draftRevision === 0) { content = saved.content; visibility = saved.visibility; }
+          if (saved.reply) audienceConfirmed = saved.reply.audienceConfirmed;
           for (const item of saved.attachments) {
             const uploaded = item.phase === "ready" ? { ...item.upload } : undefined;
             const view: FeedAttachment = { id: ++nextAttachmentId, name: uploaded?.name ?? (item.phase === "reselect" ? item.name : "添付"),
@@ -152,7 +161,8 @@ export function createFeedController(options: {
             attachments.set(view.id, { uploaded, view });
           }
           sendIntent = saved.intent ? { ...saved.intent, phase: "uncertain" } : undefined;
-          if (sendIntent) error = "再起動前の投稿結果は未確認です。元の内容とフィードを確認してください。";
+          if (sendIntent) error = replyTarget ? "再起動前の返信結果は未確認です。再送する前に元の内容と返信一覧を確認してください。"
+            : "再起動前の投稿結果は未確認です。元の内容とフィードを確認してください。";
         }
         recoveryLoaded = true;
       } catch { if (active(expected)) recoveryError = "保存した投稿下書きを確認できませんでした。再確認するまで保存・送信を待機します。"; }
@@ -191,7 +201,8 @@ export function createFeedController(options: {
     if (!sendIntent || !options.readRecoveryOutcome || checkingOutcome || sending || !active(authority) || recoveryRetired) return;
     const expected = authority, id = sendIntent.id; checkingOutcome = true; recoveryReviewed = false; publish();
     try { await options.readRecoveryOutcome(); if (active(expected) && sendIntent?.id === id) recoveryReviewed = true; }
-    catch { if (active(expected)) recoveryError = "フィードを確認できませんでした。下書きと元の投稿内容は保持しています。"; }
+    catch { if (active(expected)) recoveryError = replyTarget ? "返信一覧を確認できませんでした。下書きと元の返信内容は保持しています。"
+      : "フィードを確認できませんでした。下書きと元の投稿内容は保持しています。"; }
     finally { checkingOutcome = false; publish(); }
   }
   async function confirmRecoveryReview() {
@@ -203,6 +214,16 @@ export function createFeedController(options: {
       }
     } finally { confirmingIntent = undefined; publish(); }
   }
+  async function confirmReplyContext() {
+    if (!previousReplyTarget || !replyTarget || !recoveryLoaded || recoveryRetired || !active(authority) || sending || recoverySaving) return;
+    // The canonical parent remains authoritative. Adoption changes only the
+    // next draft; the original uncertain intent keeps its original context.
+    previousReplyTarget = undefined;
+    visibility = replyTarget.visibility;
+    audienceConfirmed = replyTarget.visibility !== "followers";
+    draftRevision++; changedRecovery();
+    await persistRecovery(); publish();
+  }
 
   function setDraft(value: string) {
     if (!active(authority) || !recoveryLoaded || value === content) return;
@@ -213,7 +234,7 @@ export function createFeedController(options: {
   }
 
   function setVisibility(value: FeedVisibility) {
-    if (!active(authority) || !recoveryLoaded) return;
+    if (!active(authority) || !recoveryLoaded || previousReplyTarget) return;
     if (
       replyTarget &&
       (replyTarget.visibility !== "followers" ||
@@ -386,6 +407,7 @@ export function createFeedController(options: {
     const revision = draftRevision;
     const submittedContent = content;
     const submittedVisibility = visibility;
+    const submittedReplyTarget = replyTarget ? { ...replyTarget } : undefined;
     const submittedSession = snapshotFeedSession(session);
     const submittedEntries = Array.from(attachments.values());
     const submittedMedia = submittedEntries.map((entry) => ({
@@ -401,7 +423,8 @@ export function createFeedController(options: {
     let accepted = false, dispatched = false;
     // This ID correlates local work within the incarnation; it is never a server idempotency key.
     const originalIntent: FeedRecoveryIntent = { id: "local-" + attempt, phase: "pending", content: submittedContent,
-      visibility: submittedVisibility, media: submittedMedia.map(item => ({ ...item })) };
+      visibility: submittedVisibility, media: submittedMedia.map(item => ({ ...item })),
+      ...(submittedReplyTarget ? { replyTo: submittedReplyTarget } : {}) };
     if (options.recovery) { sendIntent = originalIntent; recoveryRevision++; }
     clearTimeout(recoveryTimer); recoveryTimer = undefined;
     try {
@@ -425,7 +448,7 @@ export function createFeedController(options: {
         submittedVisibility,
         submittedMedia,
         requestAbort.signal,
-        replyTarget,
+        submittedReplyTarget,
       );
       if (!active(expected)) return;
       accepted = true; sendIntent = undefined; recoveryRevision++;
@@ -489,6 +512,7 @@ export function createFeedController(options: {
     if (disposed) return;
     const wasSending = sending;
     authority += 1;
+    if (!recoveryLoaded) recoveryLoad = undefined;
     postAbort?.abort();
     postAbort = undefined;
     pump = undefined;
@@ -511,7 +535,8 @@ export function createFeedController(options: {
     status = "";
     refreshError = "";
     sendRevision += 1;
-    draftRevision += 1;
+    // Before restore completes, pausing a read is not a user draft edit.
+    if (recoveryLoaded) draftRevision += 1;
     changedRecovery();
     publish();
   }
@@ -527,11 +552,15 @@ export function createFeedController(options: {
         replyTarget.visibility === target.visibility)
     )
       return;
+    const previous = previousReplyTarget ?? replyTarget;
     pause();
     replyTarget = { ...target };
-    visibility = target.visibility;
-    audienceConfirmed = target.visibility !== "followers";
-    draftRevision += 1;
+    if (options.recovery && recoveryLoaded) previousReplyTarget = { ...previous };
+    else {
+      visibility = target.visibility;
+      audienceConfirmed = target.visibility !== "followers";
+    }
+    if (recoveryLoaded) draftRevision += 1;
     changedRecovery();
     publish();
   }
@@ -579,7 +608,7 @@ export function createFeedController(options: {
 
   return {
     getState,
-    restoreRecovery, flushRecovery, reviewRecoveryOutcome, confirmRecoveryReview,
+    restoreRecovery, flushRecovery, reviewRecoveryOutcome, confirmRecoveryReview, confirmReplyContext,
     setDraft,
     setVisibility,
     clearDraft,

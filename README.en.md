@@ -20,7 +20,11 @@ An interrupted or unknown post retains its original body, visibility and media s
 Read the current actor/feed through the canonical API, then explicitly confirm review to allow the next post; this creates no delivery ACK.
 A confirmed post and a failed final draft checkpoint remain distinct. Clear removes the current unsent draft while preserving any unreviewed original intent.
 Unreadable data is preserved and blocks saving/posting until explicit recovery. Actual saved-row removal retires only that row, with durable cleanup retry when intent recording succeeded; absence from metadata alone is insufficient.
-Reply/profile drafts remain a separate unfinished recovery path. Real Stronghold/OS termination, signing, device update/rollback and legitimate server/SSO qualification are not established by these source/local checks.
+Replies also use the verified saved row, with separate scopes for each canonical parent and for the ordinary post view versus the profile conversation. They cannot overwrite the home draft or each other's draft.
+Recovery retains the original uncertain parent/audience/community independently of newer input. Only a successful canonical replies read plus explicit review can permit the next send; restore or read failure never resends.
+Changed parent settings block sending until explicit adoption of the current canonical context. Actual followers-audience choices restore, while direct recipients still require explicit mentions and the existing API validation.
+Storage limits fail closed without evicting older drafts. Real saved-row removal and cleanup retry cover both home and reply scopes.
+Profile editing itself still lacks cold draft recovery. Real Stronghold/OS termination, signing, device update/rollback and legitimate server/SSO qualification are not established by these source/local checks.
 
 日本語: [README.md](README.md)
 
