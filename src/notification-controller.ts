@@ -95,6 +95,8 @@ export function createNotificationController(options: {
   onPostEditReceipt?: (post: MobileEditablePost) => void;
   onPostEditSaved?: () => Promise<void>;
   confirmDiscardPostEdit?: () => boolean | Promise<boolean>;
+  postEditRecovery?: (postId: string) => import("./post-edit-recovery.ts").PostEditRecoveryPort;
+  postEditRecoveryView?: "post" | "profile";
 }) {
   let session = snapshotFeedSession(options.session);
   let sessionKey = feedSessionIdentity(session);
@@ -578,6 +580,7 @@ export function createNotificationController(options: {
       const id = postId, authorId = state.post.author.ap_id;
       const editor: PostEditController = createPostEditController({
         session, postId: id, authorId,
+        recovery: options.postEditRecovery ? () => options.postEditRecovery!(id) : undefined, recoveryView: options.postEditRecoveryView,
         isActive: () => live() && state.page === "post" && postId === id && !state.postDeleteNeedsReload,
         onChange: () => { if (postEditor === editor) publish({ ...state, postEdit: editor.getState() }); },
         onReceipt: (post) => {

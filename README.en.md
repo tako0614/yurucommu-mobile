@@ -275,6 +275,17 @@ reads to restore it. Changing only the selected API endpoint also retires the
 previous operation scope. Preflight detects fields already changed by another
 writer, but the existing API has no atomic edit CAS, so a subsequent writer may
 still race it. App source/local evidence does not qualify devices or deployment.
+Post edits now persist under the verified saved account row, actor, Host/API,
+post and ordinary/profile view, separating the baseline, newer draft and original
+unconfirmed patch. Restored bytes grant no read or write authority. Unknown
+outcomes and conflicting fields require a fresh canonical read and explicit
+review; that action does not resend anything. A failed pre-send recovery write
+refuses PATCH. A failed final checkpoint does not turn a known canonical ACK
+into an unknown outcome. Corrupt records are preserved, with an explicit retry.
+Existing row retirement and cleanup retry also cover post edits. Last input
+before a completed checkpoint, concurrent processes, real Stronghold/OS restart,
+device updates and legitimate server/SSO use remain separate qualification.
+
 
 Posts with content warnings start collapsed in home, bookmarks, details, replies
 and profiles. Each card offers explicit show/hide controls for its text and media;

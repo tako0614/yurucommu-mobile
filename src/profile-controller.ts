@@ -62,6 +62,7 @@ export function createProfileController(options: {
   onPostEditReceipt?: (post: MobileEditablePost) => void;
   onPostEditSaved?: () => Promise<void>;
   confirmDiscardPostEdit?: () => boolean | Promise<boolean>;
+  postEditRecovery?: Parameters<typeof createNotificationController>[0]["postEditRecovery"];
 }) {
   let session = snapshotFeedSession(options.session),
     key = keyOf(session),
@@ -120,6 +121,7 @@ export function createProfileController(options: {
       confirmDiscardReply: options.confirmDiscardReply,
       edits,
       confirmDiscardPostEdit: options.confirmDiscardPostEdit,
+      postEditRecovery: options.postEditRecovery, postEditRecoveryView: "profile",
       onPostEditReceipt: (post) => { applyPostEdits();options.onPostEditReceipt?.(post); },
       onPostEditSaved: options.onPostEditSaved,
     });

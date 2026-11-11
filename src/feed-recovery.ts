@@ -171,7 +171,7 @@ const accounts = new WeakMap<MobileSecureStore, Map<string, AccountState>>();
 const indexQueues = new WeakMap<MobileSecureStore, Promise<void>>();
 const indexKey = "yurucommu:feed-recovery:accounts:v1";
 const maxEnvelopeBytes = 4 * 1024 * 1024;
-const scopeKey = /^yurucommu:(?:feed|reply|profile)-recovery:scope:v1:[a-f0-9]{64}$/u;
+const scopeKey = /^yurucommu:(?:feed|reply|profile|post-edit)-recovery:scope:v1:[a-f0-9]{64}$/u;
 
 function bounded(value: unknown, limit: number): asserts value is string {
   if (typeof value !== "string" || value.length > limit || new TextEncoder().encode(value).byteLength > limit) {
