@@ -282,6 +282,13 @@ outcomes and conflicting fields require a fresh canonical read and explicit
 review; that action does not resend anything. A failed pre-send recovery write
 refuses PATCH. A failed final checkpoint does not turn a known canonical ACK
 into an unknown outcome. Corrupt records are preserved, with an explicit retry.
+When the current format and account/post/view scope are identifiable but saved
+contents are corrupt, an explicit review and confirmation can discard only that
+record. Cancellation preserves it; changed input or saved bytes invalidate the
+old confirmation. Unreadable headers, other scopes and unknown formats cannot
+authorize discard. A fresh canonical read follows, preserving current input and
+unconfirmed attempts without resending or acknowledging them. A lost local
+delete acknowledgement requires an explicit read before editing can resume.
 Existing row retirement and cleanup retry also cover post edits. Last input
 before a completed checkpoint, concurrent processes, real Stronghold/OS restart,
 device updates and legitimate server/SSO use remain separate qualification.

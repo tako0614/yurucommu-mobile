@@ -1,5 +1,5 @@
 import { normalizeHostUrl, type MobileSession } from "@takosjp/mobile-kit";
-import type { PostEditRecoveryPort, PostEditRecoverySnapshot } from "./post-edit-recovery.ts";
+import { PostEditRecoveryError, type PostEditRecoveryPort, type PostEditRecoverySnapshot, type PostEditInvalidRecoveryReview } from "./post-edit-recovery.ts";
 import { snapshotFeedSession } from "./feed-session.ts";
 import { loadMobileEditablePost, saveMobilePostEdit, changedPostEditFields, postEditForm, MobilePostEditError, type MobileEditablePost, type MobilePostEditForm, type MobilePostEditPatch, } from "./post-edit-api.ts";
 const fields = ["content", "summary"] as const;
@@ -17,7 +17,8 @@ export interface MobilePostEditState {
     readonly status: string;
     readonly refreshError: string;
     readonly recovery?: { readonly ready: boolean; readonly saving: boolean; readonly error: string;
-        readonly attempted?: MobilePostEditPatch; readonly conflicts: readonly (keyof MobilePostEditForm)[]; readonly canConfirmReview: boolean };
+        readonly attempted?: MobilePostEditPatch; readonly conflicts: readonly (keyof MobilePostEditForm)[]; readonly canConfirmReview: boolean;
+        readonly canReviewInvalid: boolean; readonly reviewingInvalid: boolean; readonly discardingInvalid: boolean; readonly invalidReview: boolean };
 }
 export function createPostEditController(options: {
     session: MobileSession;
@@ -47,6 +48,8 @@ export function createPostEditController(options: {
     let recoveryTimer: ReturnType<typeof setTimeout> | undefined, flushing: Promise<boolean> | undefined;
     let recoveryBase: MobilePostEditForm | undefined, recoveryReviewed = false, confirmingRecovery = false;
     let recoveryConflicts: (keyof MobilePostEditForm)[] = [];
+    let recoveryInvalid = false, reviewingInvalid = false, discardingInvalid = false, invalidReviewEpoch = 0;
+    let invalidReview: { value: PostEditInvalidRecoveryReview; port: PostEditRecoveryPort; owner: number; revision: number; versions: typeof versions } | undefined;
     const active = () => !disposed && options.isActive?.() !== false;
     const live = () => active() && visible;
     const current = (owner: number) => live() && generation === owner;
@@ -64,11 +67,13 @@ export function createPostEditController(options: {
         }
         const dirty = !!base && fields.some(key => draft[key] !== postEditForm(base!)[key]);
         return { visible, loading, saving, needsReload, uncertain, dirty,
-            canSave: live() && !!base && recoveryLoaded && !recoveryError && !recoverySaving && !confirmingRecovery && !loading && !saving && !needsReload && !uncertain && !invalid && Object.keys(changed).length > 0,
+            canSave: live() && !!base && recoveryLoaded && !recoveryError && !recoverySaving && !confirmingRecovery && !reviewingInvalid && !discardingInvalid && !invalidReview && !loading && !saving && !needsReload && !uncertain && !invalid && Object.keys(changed).length > 0,
             draft: { ...draft }, base, error: error || invalid, status, refreshError,
             recovery: options.recovery ? { ready: recoveryLoaded, saving: recoverySaving, error: recoveryError,
                 attempted: attempted && { ...attempted.patch }, conflicts: [...recoveryConflicts],
-                canConfirmReview: (!!attempted || !!recoveryConflicts.length) && recoveryReviewed && !loading && !saving && !recoverySaving && !confirmingRecovery } : undefined };
+                canConfirmReview: (!!attempted || !!recoveryConflicts.length) && recoveryReviewed && !loading && !saving && !recoverySaving && !confirmingRecovery && !reviewingInvalid && !discardingInvalid && !invalidReview,
+                canReviewInvalid: live() && recoveryInvalid && !!recoveryPort && !loading && !saving && !recoverySaving && !confirmingRecovery && !reviewingInvalid && !discardingInvalid && !invalidReview,
+                reviewingInvalid, discardingInvalid, invalidReview: !!invalidReview } : undefined };
     }
     function merge(post: MobileEditablePost, resetVersions?: typeof versions) {
         const previous = base ? postEditForm(base) : null, next = postEditForm(post), kept = { ...draft };
@@ -93,11 +98,12 @@ export function createPostEditController(options: {
         }
     }
     async function read(resetVersions?: typeof versions): Promise<boolean> {
-        if (!live() || loading || saving || confirmingRecovery)
+        if (!live() || loading || saving || confirmingRecovery || reviewingInvalid || discardingInvalid)
             return false;
         const owner = ++generation, abort = new AbortController(), recovering = uncertain;
         pending = abort;
         loading = true;
+        invalidReview = undefined;
         if (options.recovery) recoveryReviewed = false;
         error = "";
         status = "";
@@ -113,19 +119,36 @@ export function createPostEditController(options: {
             let restored = false;
             if (firstRead) {
                 try {
+                    recoveryPort = undefined;
                     const port = options.recovery!();
                     if (port.scope.product !== session.product || port.scope.hostUrl !== normalizeHostUrl(session.hostUrl) ||
                         port.scope.actorApId !== options.authorId || port.scope.postApId !== options.postId ||
                         port.scope.apiBaseUrl !== session.apiBaseUrl || port.scope.view !== (options.recoveryView ?? "post")) throw new Error("投稿編集の保存先が一致しません。");
+                    recoveryPort = port;
                     const saved = await port.load(); if (!current(owner)) return false;
-                    recoveryPort = port; restored = !!saved; base = post; draft = postEditForm(post);
+                    restored = !!saved; base = post; draft = postEditForm(post);
                     if (saved) {
                         for (const key of fields) if (saved.draft[key] !== saved.base[key]) draft[key] = saved.draft[key];
                         attempted = saved.attempted; recoveryBase = { ...saved.base };
                     }
-                    recoveryLoaded = true; recoveryError = "";
-                } catch (cause) { if (current(owner)) recoveryError = "保存した投稿編集を確認できませんでした。再確認まで保存を待機します。"; throw cause; }
-            } else merge(post, resetVersions);
+                    recoveryLoaded = true; recoveryError = ""; recoveryInvalid = false;
+                } catch (cause) {
+                    if (current(owner)) {
+                        recoveryInvalid = cause instanceof PostEditRecoveryError && cause.code === "invalid-data";
+                        recoveryError = "保存した投稿編集を確認できませんでした。再確認まで保存を待機します。";
+                    }
+                    throw cause;
+                }
+            } else {
+                if (recoveryInvalid && recoveryPort) {
+                    const saved = await recoveryPort.load(); if (!current(owner)) return false;
+                    // A lost delete ACK can be resolved by an explicit read.
+                    // A different valid record is preserved, not implicitly replaced.
+                    if (saved !== null) throw new PostEditRecoveryError("changed");
+                    recoveryInvalid = false; recoveryError = "";
+                }
+                merge(post, resetVersions);
+            }
             loading = false;
             if (options.recovery) {
                 const before = recoveryBase ?? previousBase, latest = postEditForm(post);
@@ -174,6 +197,7 @@ export function createPostEditController(options: {
             return;
         draft = { ...draft, [key]: value };
         versions[key]++;
+        invalidReview = undefined;
         recoveryReviewed = false; changedRecovery();
         error = "";
         status = "";
@@ -255,7 +279,8 @@ export function createPostEditController(options: {
         loading = false;
         saving = false;
         recoveryReviewed = false;
-        if (recoveryLoaded && savedRecoveryRevision !== recoveryRevision) void flushRecovery();
+        invalidReview = undefined;
+        if (recoveryLoaded && !recoveryInvalid && savedRecoveryRevision !== recoveryRevision) void flushRecovery();
         clearTimeout(recoveryTimer); recoveryTimer = undefined;
         visible = false;
         publish();
@@ -289,7 +314,7 @@ export function createPostEditController(options: {
     function flushRecovery(): Promise<boolean> {
         clearTimeout(recoveryTimer); recoveryTimer = undefined;
         if (flushing) return flushing;
-        if (!options.recovery || disposed || !recoveryLoaded || !base || !recoveryPort) return Promise.resolve(false);
+        if (!options.recovery || disposed || !recoveryLoaded || !base || !recoveryPort || reviewingInvalid || discardingInvalid) return Promise.resolve(false);
         recoverySaving = true;
         flushing = Promise.resolve().then(async () => {
             try {
@@ -300,8 +325,14 @@ export function createPostEditController(options: {
                         ...(!confirmingRecovery && attempted ? { attempted: { draft: { ...attempted.draft }, patch: { ...attempted.patch } } } : {}) };
                     await recoveryPort!.save(data); savedRecoveryRevision = revision;
                 } while (revision !== recoveryRevision);
-                recoveryError = ""; return true;
-            } catch { if (!disposed) recoveryError = "投稿編集の復旧情報を保存できませんでした。保存を再試行してください。"; return false; }
+                recoveryError = ""; recoveryInvalid = false; return true;
+            } catch (cause) {
+                if (!disposed) {
+                    recoveryInvalid ||= cause instanceof PostEditRecoveryError && cause.code === "invalid-data";
+                    recoveryError = "投稿編集の復旧情報を保存できませんでした。保存を再試行してください。";
+                }
+                return false;
+            }
             finally { recoverySaving = false; flushing = undefined; publish(); }
         });
         publish(); return flushing;
@@ -316,7 +347,43 @@ export function createPostEditController(options: {
             }
         } finally { confirmingRecovery = false; publish(); }
     }
+    async function reviewInvalidRecovery() {
+        if (!getState().recovery?.canReviewInvalid || !recoveryPort) return;
+        const port = recoveryPort, owner = generation, revision = recoveryRevision, input = { ...versions }, epoch = ++invalidReviewEpoch;
+        reviewingInvalid = true; publish();
+        try {
+            const value = await port.reviewInvalid();
+            if (current(owner) && recoveryPort === port && recoveryRevision === revision && invalidReviewEpoch === epoch)
+                invalidReview = { value, port, owner, revision, versions: input };
+        } catch {
+            if (current(owner)) recoveryError = "保存範囲・破損内容を確認できませんでした。破棄せず、保存情報を再確認してください。";
+        } finally { reviewingInvalid = false; publish(); }
+    }
+    async function discardInvalidRecovery() {
+        const review = invalidReview;
+        if (!review || !current(review.owner) || recoveryPort !== review.port || loading || saving || recoverySaving || confirmingRecovery || reviewingInvalid || discardingInvalid) return;
+        invalidReview = undefined;
+        if (review.revision !== recoveryRevision || fields.some(key => review.versions[key] !== versions[key])) {
+            recoveryError = "入力が変わったため破棄を中止しました。現在の入力を保持しています。もう一度確認してください。";
+            publish(); return;
+        }
+        discardingInvalid = true; publish();
+        try {
+            await review.value.discard();
+            if (!current(review.owner) || recoveryPort !== review.port) return;
+            recoveryInvalid = false; recoveryError = "";
+            discardingInvalid = false;
+            await read();
+        } catch {
+            if (current(review.owner)) recoveryError = "保存情報の破棄を確認できませんでした。入力を保持し、保存待機を続けます。再確認してください。";
+        } finally { discardingInvalid = false; publish(); }
+    }
+    function cancelInvalidRecoveryReview() {
+        if (discardingInvalid) return;
+        invalidReview = undefined; invalidReviewEpoch++; publish();
+    }
     return { getState, show, setField, save, reload: () => read(), discardAndReload, pause, hide: pause, dispose, flushRecovery, confirmRecoveryReview,
+        reviewInvalidRecovery, discardInvalidRecovery, cancelInvalidRecoveryReview,
         getRevision: () => JSON.stringify([generation, versions.content, versions.summary]),
         hasDraft: () => getState().dirty || uncertain || saving };
 }
