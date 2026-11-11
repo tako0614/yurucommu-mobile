@@ -40,6 +40,7 @@ import {
 } from "./host-route.ts";
 import { createProfileController } from "./profile-controller.ts";
 import { createProfileRecoveryStore, type ProfileRecoveryPort } from "./profile-recovery.ts";
+import { createPostEditRecoveryStore, type PostEditRecoveryPort } from "./post-edit-recovery.ts";
 import { createPostEditStore } from "./post-edit-store.ts";
 import { ProfileScreen } from "./profile-screen.tsx";
 import { createPostLikeStore } from "./post-like-controller.ts";
@@ -103,7 +104,7 @@ export function createYurucommuMobileApp(
       setCleanupFailures(rows => rows.filter(row => cleanupKey(row) !== cleanupKey(scope)));
     } catch {
       setCleanupFailures(rows => rows.some(row => cleanupKey(row) === cleanupKey(scope)) ? rows : [...rows, scope]);
-      throw new Error("サインアウトしましたが、このアカウントの投稿・返信・プロフィール入力の削除を確認できませんでした。");
+      throw new Error("サインアウトしましたが、このアカウントの投稿・返信・プロフィール・投稿編集入力の削除を確認できませんでした。");
     }
   }
   async function restoreCleanup() {
@@ -196,7 +197,8 @@ export function createYurucommuMobileApp(
         const [session, setSession] = createSignal(context.session);
         const [actions, setActions] = createSignal(context);
         const [binding, setBinding] = createSignal<{ key: string; port: FeedRecoveryPort;
-          reply: (id: string, view: "post" | "profile") => FeedRecoveryPort; profile: () => ProfileRecoveryPort }>();
+          reply: (id: string, view: "post" | "profile") => FeedRecoveryPort; profile: () => ProfileRecoveryPort;
+          edit: (id: string, view: "post" | "profile") => PostEditRecoveryPort }>();
         const [bindingError, setBindingError] = createSignal("");
         const [bindingRetry, setBindingRetry] = createSignal(0);
         let bindingEpoch = 0, selectedIdentity = "", selectedActor: string | undefined;
@@ -227,7 +229,13 @@ export function createYurucommuMobileApp(
                   scope: { product: "yurucommu", hostUrl: currentSession.hostUrl, actorApId: actor,
                     ...(currentSession.apiBaseUrl === undefined ? {} : { apiBaseUrl: currentSession.apiBaseUrl }) } });
               };
-              setBinding(previous => previous?.key === key ? previous : { key, port, reply, profile }); setBindingError("");
+              const edit = (id: string, view: "post" | "profile") => {
+                if (feedSessionIdentity(session()) !== identity || home()?.actor.ap_id !== actor) throw new Error("投稿編集の本人scopeが変わりました。");
+                return createPostEditRecoveryStore({ store: recovery().accountStorage({ accounts, session: currentSession }),
+                  scope: { product: "yurucommu", hostUrl: currentSession.hostUrl, actorApId: actor, postApId: id, view,
+                    ...(currentSession.apiBaseUrl === undefined ? {} : { apiBaseUrl: currentSession.apiBaseUrl }) } });
+              };
+              setBinding(previous => previous?.key === key ? previous : { key, port, reply, profile, edit }); setBindingError("");
             } catch { if (live && epoch === bindingEpoch) setBindingError("このアカウントの安全な投稿下書き保存先を確認できませんでした。"); }
           })();
         });
@@ -236,6 +244,12 @@ export function createYurucommuMobileApp(
           const selected = binding();
           if (!selected) throw new Error("このアカウントの返信下書き保存先を確認できません。投稿を再読み込みしてください。");
           return selected.reply(target.apId, view);
+        }
+
+        function postEditRecovery(id: string, view: "post" | "profile") {
+          const selected = binding();
+          if (!selected) throw new Error("このアカウントの投稿編集保存先を確認できません。投稿を再読み込みしてください。");
+          return selected.edit(id, view);
         }
 
         const [editRevision, setEditRevision] = createSignal(0);
@@ -273,6 +287,7 @@ export function createYurucommuMobileApp(
             return selected.profile();
           },
           replyRecovery: target => replyRecovery(target, "profile"),
+          postEditRecovery: id => postEditRecovery(id, "profile"),
           edits,
           onPostEditReceipt: applyPostEdits,
           onPostEditSaved: () => actions().refreshHome(),
@@ -312,6 +327,7 @@ export function createYurucommuMobileApp(
         onCleanup(() => profiles.dispose());
         const notifications = createNotificationController({
           replyRecovery: target => replyRecovery(target, "post"),
+          postEditRecovery: id => postEditRecovery(id, "post"),
           edits,
           onPostEditReceipt: applyPostEdits,
           onPostEditSaved: () => actions().refreshHome(),
