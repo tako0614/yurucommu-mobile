@@ -171,7 +171,7 @@ const accounts = new WeakMap<MobileSecureStore, Map<string, AccountState>>();
 const indexQueues = new WeakMap<MobileSecureStore, Promise<void>>();
 const indexKey = "yurucommu:feed-recovery:accounts:v1";
 const maxEnvelopeBytes = 4 * 1024 * 1024;
-const scopeKey = /^yurucommu:(?:feed|reply)-recovery:scope:v1:[a-f0-9]{64}$/u;
+const scopeKey = /^yurucommu:(?:feed|reply|profile)-recovery:scope:v1:[a-f0-9]{64}$/u;
 
 function bounded(value: unknown, limit: number): asserts value is string {
   if (typeof value !== "string" || value.length > limit || new TextEncoder().encode(value).byteLength > limit) {
@@ -346,13 +346,19 @@ export function createFeedRecoveryAccounts(options: { store?: MobileSecureStore 
     state.active();
     return createFeedRecoveryStore({ store: state.store, scope });
   }
+  function selectedAccount(input: { accounts: MobileAccountList; session: MobileSession }) {
+    const rows = input.accounts.accounts.filter(row => row.id === input.accounts.activeId);
+    if (input.session.product !== "yurucommu" || rows.length !== 1 || rows[0].product !== "yurucommu" ||
+      mobileAccountIdentity(rows[0]) !== mobileAccountIdentity(input.session)) throw new FeedRecoveryError("invalid-scope");
+    return rows[0];
+  }
   return {
     bind,
+    accountStorage(input: { accounts: MobileAccountList; session: MobileSession }) {
+      const state = accountState(identity(selectedAccount(input)).value); state.active(); return state.store;
+    },
     select(input: { accounts: MobileAccountList; session: MobileSession; actorApId: string; replyParentApId?: string; replyView?: "post" | "profile" }) {
-      const rows = input.accounts.accounts.filter(row => row.id === input.accounts.activeId);
-      if (input.session.product !== "yurucommu" || rows.length !== 1 || rows[0].product !== "yurucommu" ||
-        mobileAccountIdentity(rows[0]) !== mobileAccountIdentity(input.session)) throw new FeedRecoveryError("invalid-scope");
-      return bind(rows[0], { product: "yurucommu", hostUrl: input.session.hostUrl, actorApId: input.actorApId,
+      return bind(selectedAccount(input), { product: "yurucommu", hostUrl: input.session.hostUrl, actorApId: input.actorApId,
         ...(input.replyParentApId === undefined ? {} : { replyParentApId: input.replyParentApId }),
         ...(input.replyView === undefined ? {} : { replyView: input.replyView }),
         ...(input.session.apiBaseUrl === undefined ? {} : { apiBaseUrl: input.session.apiBaseUrl }) });

@@ -39,6 +39,7 @@ import {
   type NativeNotificationRouteRequest,
 } from "./host-route.ts";
 import { createProfileController } from "./profile-controller.ts";
+import { createProfileRecoveryStore, type ProfileRecoveryPort } from "./profile-recovery.ts";
 import { createPostEditStore } from "./post-edit-store.ts";
 import { ProfileScreen } from "./profile-screen.tsx";
 import { createPostLikeStore } from "./post-like-controller.ts";
@@ -102,7 +103,7 @@ export function createYurucommuMobileApp(
       setCleanupFailures(rows => rows.filter(row => cleanupKey(row) !== cleanupKey(scope)));
     } catch {
       setCleanupFailures(rows => rows.some(row => cleanupKey(row) === cleanupKey(scope)) ? rows : [...rows, scope]);
-      throw new Error("サインアウトしましたが、このアカウントの投稿下書き削除を確認できませんでした。");
+      throw new Error("サインアウトしましたが、このアカウントの投稿・返信・プロフィール入力の削除を確認できませんでした。");
     }
   }
   async function restoreCleanup() {
@@ -195,7 +196,7 @@ export function createYurucommuMobileApp(
         const [session, setSession] = createSignal(context.session);
         const [actions, setActions] = createSignal(context);
         const [binding, setBinding] = createSignal<{ key: string; port: FeedRecoveryPort;
-          reply: (id: string, view: "post" | "profile") => FeedRecoveryPort }>();
+          reply: (id: string, view: "post" | "profile") => FeedRecoveryPort; profile: () => ProfileRecoveryPort }>();
         const [bindingError, setBindingError] = createSignal("");
         const [bindingRetry, setBindingRetry] = createSignal(0);
         let bindingEpoch = 0, selectedIdentity = "", selectedActor: string | undefined;
@@ -220,7 +221,13 @@ export function createYurucommuMobileApp(
                 if (feedSessionIdentity(session()) !== identity || home()?.actor.ap_id !== actor) throw new Error("返信の本人scopeが変わりました。");
                 return recovery().select({ accounts, session: currentSession, actorApId: actor, replyParentApId: id, replyView: view });
               };
-              setBinding(previous => previous?.key === key ? previous : { key, port, reply }); setBindingError("");
+              const profile = () => {
+                if (feedSessionIdentity(session()) !== identity || home()?.actor.ap_id !== actor) throw new Error("プロフィールの本人scopeが変わりました。");
+                return createProfileRecoveryStore({ store: recovery().accountStorage({ accounts, session: currentSession }),
+                  scope: { product: "yurucommu", hostUrl: currentSession.hostUrl, actorApId: actor,
+                    ...(currentSession.apiBaseUrl === undefined ? {} : { apiBaseUrl: currentSession.apiBaseUrl }) } });
+              };
+              setBinding(previous => previous?.key === key ? previous : { key, port, reply, profile }); setBindingError("");
             } catch { if (live && epoch === bindingEpoch) setBindingError("このアカウントの安全な投稿下書き保存先を確認できませんでした。"); }
           })();
         });
@@ -260,6 +267,11 @@ export function createYurucommuMobileApp(
         const [bookmarkRevision, setBookmarkRevision] = createSignal(0);
         const [profileRevision, setProfileRevision] = createSignal(0);
         const profiles = createProfileController({
+          profileRecovery: () => {
+            const selected = binding();
+            if (!selected) throw new Error("このアカウントのプロフィール入力保存先を確認できません。");
+            return selected.profile();
+          },
           replyRecovery: target => replyRecovery(target, "profile"),
           edits,
           onPostEditReceipt: applyPostEdits,
@@ -645,11 +657,11 @@ export function createYurucommuMobileApp(
     // Remains mounted across sign-out: a failed native removal must stay
     // recoverable even after the account-owned feed view has been retired.
     BackRecovery: () => <><Show when={cleanupCheckError()}><div role="alert">
-      <p>未完の投稿下書き削除を確認できませんでした。保存データは削除していません。</p>
-      <button type="button" class="text-button" disabled={cleaning()} onClick={() => void retryCleanup()}>投稿下書き削除の確認を再試行</button>
+      <p>未完の保存入力の削除を確認できませんでした。保存データは削除していません。</p>
+      <button type="button" class="text-button" disabled={cleaning()} onClick={() => void retryCleanup()}>保存入力の削除確認を再試行</button>
     </div></Show><Show when={cleanupFailures().length}><div role="alert">
-      <p>サインアウト済みアカウントの投稿下書き削除を確認できませんでした。</p>
-      <button type="button" class="text-button" disabled={cleaning()} onClick={() => void retryCleanup()}>投稿下書きの削除を再試行</button>
+      <p>サインアウト済みアカウントの投稿・返信・プロフィール入力の削除を確認できませんでした。</p>
+      <button type="button" class="text-button" disabled={cleaning()} onClick={() => void retryCleanup()}>保存入力の削除を再試行</button>
     </div></Show><Show when={backFailure()}>
       <div role="alert">
         <p>Androidの戻る操作を更新できませんでした。画面内の「戻る」を使い、再接続を試してください。</p>

@@ -24,7 +24,7 @@ Replies also use the verified saved row, with separate scopes for each canonical
 Recovery retains the original uncertain parent/audience/community independently of newer input. Only a successful canonical replies read plus explicit review can permit the next send; restore or read failure never resends.
 Changed parent settings block sending until explicit adoption of the current canonical context. Actual followers-audience choices restore, while direct recipients still require explicit mentions and the existing API validation.
 Storage limits fail closed without evicting older drafts. Real saved-row removal and cleanup retry cover both home and reply scopes.
-Profile editing itself still lacks cold draft recovery. Real Stronghold/OS termination, signing, device update/rollback and legitimate server/SSO qualification are not established by these source/local checks.
+Profile editing also stores its baseline, draft fields and original unconfirmed patch separately in the same verified account's secure storage. Real Stronghold/OS termination, signing, device update/rollback and legitimate server/SSO qualification are not established by these source/local checks.
 
 日本語: [README.md](README.md)
 
@@ -238,8 +238,12 @@ canonical stored profile and final viewer within one 15-second budget. Later
 per-field edits survive an earlier ACK. Unknown outcomes retain the draft and
 require an explicit read without automatic resubmission. Reads merge current
 stored values without clearing newer edits; discarding input requires confirmation.
-Drafts remain in memory for the current account; changing accounts retires its
-operations.
+After a 150 ms input pause, the verified saved row stores the baseline, draft and original uncertain patch in secure storage. Cold restoration verifies the current actor and canonical profile first, preserving untouched remote fields and newer per-field input.
+The original patch is persisted before PUT; checkpoint failure refuses dispatch. A known ACK stays accepted if final draft persistence fails. An uncertain patch or conflicting remote field requires another successful canonical read and explicit review before saving; review creates no ACK or automatic retry.
+Partial invalid input remains editable while the existing API validator controls submission. Valid image receipts restore without a new upload; expired or unfinished images require reselection or cancellation, including expiry during the pre-PUT checkpoint.
+Unreadable private bytes are preserved. Explicit storage retry and real saved-row retirement reuse the home/reply account envelope and cleanup retry; missing metadata alone never authorizes deletion. Input before its completed write, failure to record retirement intent, cross-process transactions and real Stronghold/OS/device/SSO qualification remain limited.
+Drafts use the verified saved row's private scope; changing accounts retires its
+live operations while preserving the other saved row's private input.
 
 Profile images load on explicit action. Only canonical selected-host media gets
 the bearer, and authenticated image responses must have a supported actual MIME

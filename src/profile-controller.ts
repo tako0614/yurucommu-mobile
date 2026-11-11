@@ -48,6 +48,7 @@ export function createProfileController(options: {
   confirmDiscardReply?: () => boolean | Promise<boolean>;
   onPostReplied?: () => Promise<void>;
   replyRecovery?: Parameters<typeof createNotificationController>[0]["replyRecovery"];
+  profileRecovery?: Parameters<typeof createProfileEditController>[0]["recovery"];
   getActorId?: () => string | undefined;
   confirmDeletePost?: () => boolean | Promise<boolean>;
   onPostDeleteConfirmed?: (postId: string) => void;
@@ -126,6 +127,7 @@ export function createProfileController(options: {
   const makeEditor = (): ReturnType<typeof createProfileEditController> =>
     createProfileEditController({
       session,
+      recovery: options.profileRecovery,
       isActive: () =>
         live() &&
         state.visible &&
