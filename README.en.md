@@ -1,5 +1,8 @@
 # Yurucommu Mobile
 
+If startup cannot read saved account data or the launch bridge, the screen reports a generic failure and offers **Retry** without displaying raw exception details.
+Each retry is explicit and deduplicated; it cannot register a replacement launch listener until prior cleanup is confirmed. A read failure is not accepted as an empty saved-account list.
+
 Feed cards and saved-post previews open the existing in-app post detail. Even remote post IDs are read through the connected account's server, without an external browser handoff. Failed reads can be retried; Back preserves the compose draft and restores focus to the originating card, including its replacement after a feed refresh.
 
 Post detail can save or remove a bookmark using the server's known state. Repeated clicks are blocked during a change, and a confirmed acknowledgment updates the action and re-reads the saved-post preview without clearing the compose draft. An unknown result never triggers an automatic resend: reload the post to reconcile its current state before another change. Account or navigation changes prevent an old acknowledgment from updating another view.
