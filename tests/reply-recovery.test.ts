@@ -36,7 +36,7 @@ function fixture() {
     tokenType: "Bearer", createdAt: "2026-11-11T00:00:00Z" };
   const store: MobileSecureStore = { kind: "secure", async get(key) {
     const raw = values.get(key); if (heldRead) { const held = heldRead; heldRead = undefined; held.entered(); await held.release; } return raw;
-  }, async set(key, raw) { if (writeFailure || (failAfterAck && posts > 0)) throw new Error("synthetic write failure"); values.set(key, raw); }, async delete(key) { values.delete(key); } };
+  }, async set(key, raw) { if (writeFailure || (failAfterAck && posts > 0)) throw new Error("synthetic write failure"); values.set(key, raw); }, async delete(key) { if (writeFailure || (failAfterAck && posts > 0)) throw new Error("synthetic cleanup failure"); values.delete(key); } };
   const scope = { product: "yurucommu" as const, hostUrl: session.hostUrl, actorApId: "https://me.example/ap/users/me" };
   const controllers: ReturnType<typeof createNotificationController>[] = [];
   return { values, session, store, scope, parent, second, sent,
@@ -211,4 +211,19 @@ test("changed canonical parent settings keep both drafts and old unknown context
     const saved = await f.port(f.parent).load(); expect(saved?.reply?.target).toEqual({ apId: f.parent, visibility: "followers", communityApId: null });
     expect(saved?.intent).toBeUndefined();
   } finally { f.close(); }
+});
+
+
+test("pending or failed reply restore blocks editing and deletion without blocking the post read", async () => {
+  const f=fixture();let release!:()=>void;
+  const held=new Promise<void>(done=>{release=done;});
+  const owner=createNotificationController({session:f.session,getActorId:()=>f.scope.actorApId,
+    replyRecovery:()=>({load:async()=>{await held;throw new Error("synthetic private read failure");},save:async()=>{throw new Error("unexpected write");}})});
+  try {
+    f.ownParent();await owner.openPost(f.parent);
+    expect(owner.getState().post?.content).toBe("Canonical parent");
+    expect(owner.canEditPost()).toBe(false);expect(owner.canDeletePost()).toBe(false);
+    release();await owner.getReplyComposer()!.restoreRecovery();
+    expect(owner.canEditPost()).toBe(false);expect(owner.canDeletePost()).toBe(false);
+  } finally {release();owner.dispose();await f.close();}
 });

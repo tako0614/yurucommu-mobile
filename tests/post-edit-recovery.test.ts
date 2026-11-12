@@ -24,7 +24,7 @@ function fixture() {
   const store: MobileSecureStore = { kind: "secure", async get(key) { return values.get(key); }, async set(key, raw) {
     if (heldWrite) { const hold = heldWrite; heldWrite = undefined; hold.entered(); await hold.release; }
     if (writeFailure || afterAckFailure && bodies.length > 0) throw new Error("synthetic storage failure"); values.set(key, raw);
-  }, async delete(key) { values.delete(key); } };
+  }, async delete(key) { if (writeFailure || (afterAckFailure && bodies.length > 0)) throw new Error("synthetic cleanup failure"); values.delete(key); } };
   const controllers: ReturnType<typeof createPostEditController>[] = [];
   const port = () => createPostEditRecoveryStore({ store, scope });
   return { session, scope, store, values, bodies, port,
@@ -155,4 +155,17 @@ test("the existing saved-row account store owns post-edit cleanup without erasin
     await old.save(data); await next.save(data); await accounts.retire(row);
     await expect(old.load()).rejects.toThrow(); expect((await next.load())?.draft.content).toBe("private draft"); expect(await accounts.pendingCleanup({ accounts: [] })).toEqual([]);
   } finally { await f.close(); }
+});
+
+
+test("a confirmed clean edit releases its scope but an uncertain attempt remains", async () => {
+  const f=fixture();
+  try {
+    const port=f.port(), base={content:"saved",summary:""};
+    await port.save({base,draft:{content:"draft",summary:""}});
+    await port.save({base,draft:base});
+    expect(await port.load()).toBeNull();
+    const pending={base,draft:base,attempted:{draft:base,patch:{content:"saved"}}};
+    await port.save(pending);expect(await port.load()).toEqual(pending);
+  } finally {await f.close();}
 });

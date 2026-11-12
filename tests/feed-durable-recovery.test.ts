@@ -55,7 +55,7 @@ function fixture() {
     tokenType: "Bearer", createdAt: "2026-11-11T00:00:00Z" };
   const store: MobileSecureStore = { kind: "secure", async get(key) { if (readFailure) throw new Error("synthetic read failure"); const value = values.get(key); if (heldRead) { const held = heldRead; heldRead = undefined; held.entered(); await held.release; } return value; },
     async set(key, raw) { if (writeFailure || (afterAckFailure && posts > 0)) throw new Error("synthetic write failure"); values.set(key, raw); },
-    async delete(key) { values.delete(key); } };
+    async delete(key) { if (writeFailure || (afterAckFailure && posts > 0)) throw new Error("synthetic cleanup failure"); values.delete(key); } };
   const recovery = createFeedRecoveryStore({ store, scope: { product: "yurucommu", hostUrl: session.hostUrl, actorApId: "me" } });
   const controllers: ReturnType<typeof createFeedController>[] = [];
   return { recovery, session,

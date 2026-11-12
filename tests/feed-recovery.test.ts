@@ -97,3 +97,19 @@ test("invalid snapshots and media cannot replace protected work or fall back to 
   expect(() => createFeedRecoveryAccounts({ store: { ...store, kind: "device-persistent" } as never })).toThrow();
   expect(() => createFeedRecoveryStore({ store, scope: { ...scope, accessToken: "synthetic-never-persist" } as never })).toThrow();
 });
+
+
+test("completed or explicitly cleared reply scopes release capacity without evicting drafts", async () => {
+  const store = secureStore(), accounts = createFeedRecoveryAccounts({store});
+  const keep = accounts.bind(row, scope), data = {content:"protected",visibility:"public" as const,attachments:[]};
+  await keep.save(data);
+  for (let i=0;i<40;i++) {
+    const apId = row.hostUrl + "/posts/" + i;
+    const port = accounts.bind(row,{...scope,replyParentApId:apId});
+    const reply = {target:{apId,communityApId:null,visibility:"public" as const},audienceConfirmed:true};
+    await port.save({...data,reply});
+    await port.save({...data,content:"",reply});
+    expect(await port.load()).toBeNull();
+  }
+  expect(await keep.load()).toEqual(data);
+});

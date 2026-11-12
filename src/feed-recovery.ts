@@ -162,6 +162,13 @@ export function createFeedRecoveryStore(options: { store: MobileSecureStore; sco
         try {
           const owner = await storageKey(), previous = await store.get(owner);
           if (previous !== undefined) decodeSnapshot(previous, owner);
+          // An empty, acknowledged/cleared scope is no longer a private draft.
+          // A non-default audience is retained input too. Never evict another
+          // scope or an unresolved original intent.
+          if (!data.content.length && !data.attachments.length && !data.intent &&
+              data.visibility === (data.reply?.target.visibility ?? "public")) {
+            await store.delete(owner); return;
+          }
           const raw = JSON.stringify({ version: 1, scope: owner, savedAt: Date.now(), data }); bounded(raw, 256 * 1024);
           await store.set(owner, raw);
         } catch (cause) { if (cause instanceof FeedRecoveryError) throw cause; throw new FeedRecoveryError("storage", { cause }); }

@@ -70,6 +70,7 @@ export function HostRouteNoticeBanner(props: {
 
 export function Feed(props: {
   recovery?: FeedRecoveryPort;
+  requireRecovery?: boolean;
   home?: YurucommuMobileHome;
   session: MobileSession;
   isActive?: () => boolean;
@@ -124,7 +125,7 @@ export function Feed(props: {
   const posts = () => timeline().posts;
   return (
     <div class="mobile-feed">
-      <PostComposer controller={controller} state={state()} />
+      <Show when={!props.requireRecovery || !!props.recovery}><PostComposer controller={controller} state={state()} /></Show>
       <Show when={props.home}>
         {(home) => (
           <button

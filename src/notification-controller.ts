@@ -549,7 +549,8 @@ export function createNotificationController(options: {
   function hasReplyDraft(): boolean {
     const draft = replyComposer?.getState();
     return !!draft && (
-      !!draft.content.length || !!draft.attachments.length || draft.sending || !!draft.recovery?.intent
+      !!draft.content.length || !!draft.attachments.length || draft.sending || !!draft.recovery?.intent ||
+      !!draft.recovery && (!draft.recovery.ready || draft.recovery.loading || draft.recovery.saving || !!draft.recovery.error)
     );
   }
   function canDeletePost(): boolean {

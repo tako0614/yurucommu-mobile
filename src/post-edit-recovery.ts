@@ -109,6 +109,9 @@ export function createPostEditRecoveryStore(options: { store: MobileSecureStore;
       return queued(async () => {
         try {
           const owner = await storageKey(), raw = await store.get(owner); if (raw !== undefined) decode(raw, owner);
+          if (!data.attempted && data.base.content === data.draft.content && data.base.summary === data.draft.summary) {
+            await store.delete(owner); return;
+          }
           const encoded = JSON.stringify({ version: 1, scope: owner, savedAt: Date.now(), data }); bounded(encoded, 256 * 1024);
           await store.set(owner, encoded);
         } catch (cause) { if (cause instanceof PostEditRecoveryError) throw cause; throw new PostEditRecoveryError("storage", { cause }); }

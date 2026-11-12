@@ -557,6 +557,24 @@ export function createYurucommuMobileApp(
           if (adoptedRoute && requestedRoute() === adoptedRoute)
             setRequestedRoute(undefined);
         });
+        const renderFeed = (port?: FeedRecoveryPort) => (
+          <Feed
+            recovery={port}
+            requireRecovery
+            home={home()}
+            projectPosts={projectHomePosts}
+            session={session()}
+            refreshHome={() => actions().refreshHome()}
+            likes={likes}
+            likeActionsActive={() =>
+              notificationState().page === "home" &&
+              !profileState().visible && !searchState().visible
+            }
+            isActive={() => current.active}
+            onOpenPost={openPost}
+            onOpenProfile={openProfile}
+          />
+        );
         return (
           <>
             <HostRouteNoticeBanner
@@ -613,24 +631,8 @@ export function createYurucommuMobileApp(
                 <Show when={bindingError()}><div role="alert"><p>{bindingError()}</p>
                   <button type="button" class="text-button" onClick={() => setBindingRetry(value => value + 1)}>投稿下書きの保存先を再確認</button>
                 </div></Show>
-                <Show when={binding()} keyed fallback={<p role="status">投稿下書きの保存先を確認中…</p>}>
-                  {selected =>
-                <Feed
-                  recovery={selected.port}
-                  home={home()}
-                  projectPosts={projectHomePosts}
-                  session={session()}
-                  refreshHome={() => actions().refreshHome()}
-                  likes={likes}
-                  likeActionsActive={() =>
-                    notificationState().page === "home" &&
-                    !profileState().visible && !searchState().visible
-                  }
-                  isActive={() => current.active}
-                  onOpenPost={openPost}
-                  onOpenProfile={openProfile}
-                />
-                  }
+                <Show when={binding()} keyed fallback={renderFeed()}>
+                  {selected => renderFeed(selected.port)}
                 </Show>
                 <BookmarksPreview
                   edits={edits}
