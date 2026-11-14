@@ -1,7 +1,8 @@
-import { createEffect, Index, Show } from "solid-js";
+import { createEffect, For, Index, Show } from "solid-js";
 import type { MobileSession } from "@takosjp/mobile-kit";
 import type { createProfileEditController } from "./profile-edit-controller.ts";
 import { PostMedia } from "./post-media.tsx";
+import { profileFormKeys, type MobileProfileForm } from "./profile-edit-api.ts";
 export function ProfileEdit(props: {
   controller: ReturnType<typeof createProfileEditController>;
   revision: number;
@@ -13,6 +14,10 @@ export function ProfileEdit(props: {
     props.revision;
     return props.controller.getState();
   };
+  const recoveryBusy = () => state().recovery?.reviewingInvalid || state().recovery?.discardingInvalid;
+  const labels: Record<keyof MobileProfileForm, string> = { name: "表示名", summary: "自己紹介", icon_url: "アバターURL", header_url: "ヘッダー画像URL", is_private: "承認制フォロー", fields: "追加項目" };
+  const display = (value: MobileProfileForm[keyof MobileProfileForm] | undefined) => typeof value === "boolean" ? value ? "有効" : "無効"
+    : Array.isArray(value) ? value.map(row => row.name + ": " + row.value).join("\n") : value ?? "";
   let heading: HTMLHeadingElement | undefined,
     name: HTMLInputElement | undefined,
     save: HTMLButtonElement | undefined,
@@ -82,6 +87,39 @@ export function ProfileEdit(props: {
         <Show when={state().error}>
           <p role="alert">{state().error}</p>
         </Show>
+        <Show when={state().recovery}>{recovery => <>
+          <Show when={recovery().saving}><p role="status">プロフィール入力を安全に保存中…</p></Show>
+          <Show when={recovery().error}><div role="alert"><p>{recovery().error}</p>
+            <button type="button" class="text-button" disabled={state().busy || recovery().saving}
+              onClick={() => void props.controller.flushRecovery()}>プロフィール入力の確認・保存を再試行</button>
+          </div></Show>
+          <Show when={recovery().reviewingInvalid}><p role="status">プロフィール保存の範囲と破損内容を確認しています…</p></Show>
+          <Show when={recovery().discardingInvalid}><p role="status">破損したプロフィール保存を破棄しています…</p></Show>
+          <Show when={recovery().canReviewInvalid}>
+            <button type="button" class="text-button" onClick={() => void props.controller.reviewInvalidRecovery()}>破損したプロフィール保存を確認</button>
+          </Show>
+          <Show when={recovery().invalidReview}>
+            <div role="group" aria-label="破損したプロフィール保存の破棄確認">
+              <p>このアカウント・本人・接続先の壊れたプロフィール保存を破棄し、現在のプロフィールを読み直します。読み出せない保存済みの入力・画像情報・未確認の変更は元に戻せません。</p>
+              <p>現在の画面の入力・画像選択・確認待ちは保持します。プロフィールの変更・送信・結果の確定は行いません。</p>
+              <button type="button" class="text-button" onClick={() => void props.controller.discardInvalidRecovery()}>このプロフィールの壊れた保存を破棄</button>
+              <button type="button" class="text-button" onClick={() => props.controller.cancelInvalidRecoveryReview()}>破棄せず戻る</button>
+            </div>
+          </Show>
+          <Show when={recovery().attempted || recovery().conflicts.length}><div role="status">
+            <p>未確認のプロフィール変更、または保存時から変わった項目があります。入力を保持し、自動再送しません。</p>
+            <details><summary>元の変更と現在の保存状態</summary>
+              <For each={profileFormKeys.filter(key => key in (recovery().attempted?.patch ?? {}) || recovery().conflicts.includes(key))}>{key => <div>
+                <p>{labels[key]}</p>
+                <Show when={key in (recovery().attempted?.patch ?? {})}><p style={{ "white-space": "pre-wrap" }}>元の変更: {display(recovery().attempted?.patch[key])}</p></Show>
+                <p style={{ "white-space": "pre-wrap" }}>現在の保存状態: {display(recovery().current?.[key])}</p>
+              </div>}</For>
+            </details>
+            <p>下の「現在の保存状態を確認」から正規の状態を読み、元の変更と照合してください。</p>
+            <button type="button" class="text-button" disabled={!recovery().canConfirmReview}
+              onClick={() => void props.controller.confirmRecoveryReview()}>元の変更と現在の状態を確認した・編集を続ける</button>
+          </div></Show>
+        </>}</Show>
         <Show when={state().loaded}>
           <form
             onKeyDown={(e) => {
@@ -147,7 +185,7 @@ export function ProfileEdit(props: {
                       <input
                         type="file"
                         accept="image/jpeg,image/png,image/gif,image/webp"
-                        disabled={state().loading || state().saving}
+                        disabled={state().loading || state().saving || recoveryBusy()}
                         onChange={(e) => {
                           const file = e.currentTarget.files?.[0];
                           e.currentTarget.value = "";
@@ -166,25 +204,25 @@ export function ProfileEdit(props: {
                                 ? value().saved
                                   ? "プロフィールに保存済み"
                                   : "アップロード済み・プロフィールは保存が必要です"
-                                : "アップロード未完了"}
+                                : value().phase === "reselect" ? "元の画像を再選択してください" : "アップロード未完了"}
                           </p>
                           <Show when={value().error}>
                             <p role="alert">{value().error}</p>
-                            <button
+                            <Show when={value().phase !== "reselect"}><button
                               type="button"
                               class="text-button"
-                              disabled={state().loading || state().saving}
+                              disabled={state().loading || state().saving || recoveryBusy()}
                               onClick={() =>
                                 void props.controller.retryImage(key)
                               }
                             >
                               {entry().label}を再アップロード
-                            </button>
+                            </button></Show>
                           </Show>
                           <button
                             type="button"
                             class="text-button"
-                            disabled={state().saving || state().loading}
+                            disabled={state().saving || state().loading || recoveryBusy()}
                             onClick={() => {
                               props.controller.restoreImage(key);
                             }}

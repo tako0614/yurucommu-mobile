@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   createMobileClientController,
+  loadMobileSession,
   mobileSessionStorageKey,
   type FetchLike,
   type MobileSession,
@@ -424,3 +425,25 @@ function memoryBridge(): NativeBridge & { readonly opened: string[] } {
     openExternalUrl: async (url) => void opened.push(url),
   };
 }
+
+
+test("consumer startup retries launch input after restoring this product's session", async () => {
+  const bridge=memoryBridge();let reads=0,registered=0,live=0;
+  await bridge.secureStore!.set(mobileSessionStorageKey(productAdapter),JSON.stringify({
+    hostUrl:"https://saved.example",product:productAdapter.product,accessToken:"synthetic-saved-session",
+    tokenType:"Bearer",createdAt:"2026-11-12T00:00:00.000Z",
+  }));
+  const failure=new Error("synthetic launch read failure after restore");
+  const client=createMobileClientController({adapter:productAdapter,
+    nativeBridge:{...bridge,capabilities:{...bridge.capabilities,launchPayloadEvents:true},
+      getLaunchPayload:async()=>{if(++reads===1)throw failure;return undefined;},
+      onLaunchPayload:async()=>{registered++;live++;return async()=>{await Promise.resolve();live--;};}},
+    fetch:async()=>{throw new Error("external fetch forbidden");},loadHome:async()=>({ready:true}),homeLabel:"fixture",
+  });
+  try {
+    await expect(client.start()).rejects.toBe(failure);
+    expect(client.getState().session?.product).toBe(productAdapter.product);
+    await client.start();expect(reads).toBe(2);expect(registered).toBe(2);expect(live).toBe(1);
+    expect((await loadMobileSession({adapter:productAdapter,nativeBridge:bridge}))?.accessToken).toBe("synthetic-saved-session");
+  } finally {client.stop();}
+});

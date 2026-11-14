@@ -47,6 +47,8 @@ export function createProfileController(options: {
   onChange?: () => void;
   confirmDiscardReply?: () => boolean | Promise<boolean>;
   onPostReplied?: () => Promise<void>;
+  replyRecovery?: Parameters<typeof createNotificationController>[0]["replyRecovery"];
+  profileRecovery?: Parameters<typeof createProfileEditController>[0]["recovery"];
   getActorId?: () => string | undefined;
   confirmDeletePost?: () => boolean | Promise<boolean>;
   onPostDeleteConfirmed?: (postId: string) => void;
@@ -60,6 +62,7 @@ export function createProfileController(options: {
   onPostEditReceipt?: (post: MobileEditablePost) => void;
   onPostEditSaved?: () => Promise<void>;
   confirmDiscardPostEdit?: () => boolean | Promise<boolean>;
+  postEditRecovery?: Parameters<typeof createNotificationController>[0]["postEditRecovery"];
 }) {
   let session = snapshotFeedSession(options.session),
     key = keyOf(session),
@@ -92,6 +95,7 @@ export function createProfileController(options: {
       isActive: () => live() && state.visible && !profileEditorVisible,
       onChange: changed,
       onPostReplied: options.onPostReplied,
+      replyRecovery: options.replyRecovery,
       getActorId: options.getActorId,
       confirmDeletePost: options.confirmDeletePost,
       onPostDeleteConfirmed: (id) => {
@@ -117,6 +121,7 @@ export function createProfileController(options: {
       confirmDiscardReply: options.confirmDiscardReply,
       edits,
       confirmDiscardPostEdit: options.confirmDiscardPostEdit,
+      postEditRecovery: options.postEditRecovery, postEditRecoveryView: "profile",
       onPostEditReceipt: (post) => { applyPostEdits();options.onPostEditReceipt?.(post); },
       onPostEditSaved: options.onPostEditSaved,
     });
@@ -124,6 +129,7 @@ export function createProfileController(options: {
   const makeEditor = (): ReturnType<typeof createProfileEditController> =>
     createProfileEditController({
       session,
+      recovery: options.profileRecovery,
       isActive: () =>
         live() &&
         state.visible &&

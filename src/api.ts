@@ -380,7 +380,6 @@ export async function uploadPostMedia(
   file: File,
   signal: AbortSignal,
 ): Promise<MobileUploadedAttachment> {
-  const displayName = file.name.slice(0, 255);
   const selectedSession = snapshotFeedSession(session);
   validateMobileUpload(file);
   if (signal.aborted) throw signal.reason;
@@ -420,51 +419,60 @@ export async function uploadPostMedia(
       16 * 1024,
       "アップロード",
     );
-    if (
-      !isRecord(value) ||
-      typeof value.r2_key !== "string" ||
-      !/^uploads\/[a-f0-9]+\.(jpg|png|gif|webp|mp4|webm)$/u.test(
-        value.r2_key,
-      ) ||
-      !value.r2_key.endsWith(`.${uploadExtensions[file.type]}`) ||
-      value.content_type !== file.type ||
-      typeof value.url !== "string" ||
-      value.url !== value.url.trim() ||
-      /[\u0000-\u0020]/u.test(value.url)
-    )
-      throw new Error("アップロードの応答を確認できませんでした。");
-    const host = new URL(selectedSession.hostUrl),
-      url = new URL(value.url, host);
-    const path = `/media/${value.r2_key.slice("uploads/".length)}`;
-    if (
-      url.origin !== host.origin ||
-      url.pathname !== path ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash
-    )
-      throw new Error("アップロード先の応答を確認できませんでした。");
-    if (
-      value.expires_at !== undefined &&
-      (typeof value.expires_at !== "string" ||
-        !Number.isFinite(Date.parse(value.expires_at)) ||
-        Date.parse(value.expires_at) <= Date.now())
-    )
+    const uploaded = decodeMobileUploadReference(selectedSession.hostUrl, file, value);
+    if (uploaded.expiresAt !== undefined && Date.parse(uploaded.expiresAt) <= Date.now())
       throw new Error("添付の有効期限を確認できませんでした。");
-    return {
-      r2_key: value.r2_key,
-      url: path,
-      content_type: file.type,
-      name: displayName,
-      ...(value.expires_at === undefined
-        ? {}
-        : { expiresAt: value.expires_at as string }),
-    };
+    return uploaded;
   } finally {
     clearTimeout(deadline);
     signal.removeEventListener("abort", cancel);
   }
+}
+
+/** Existing upload reference checks, without turning an old receipt into freshness or authority. */
+export function decodeMobileUploadReference(
+  hostUrl: string, file: Pick<File, "name" | "type">, value: unknown,
+): MobileUploadedAttachment {
+  if (
+    !isRecord(value) ||
+    typeof value.r2_key !== "string" ||
+    !/^uploads\/[a-f0-9]+\.(jpg|png|gif|webp|mp4|webm)$/u.test(
+      value.r2_key,
+    ) ||
+    !value.r2_key.endsWith(`.${uploadExtensions[file.type]}`) ||
+    value.content_type !== file.type ||
+    typeof value.url !== "string" ||
+    value.url !== value.url.trim() ||
+    /[\u0000-\u0020]/u.test(value.url)
+  )
+    throw new Error("アップロードの応答を確認できませんでした。");
+  const host = new URL(hostUrl),
+    url = new URL(value.url, host);
+  const path = `/media/${value.r2_key.slice("uploads/".length)}`;
+  if (
+    url.origin !== host.origin ||
+    url.pathname !== path ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  )
+    throw new Error("アップロード先の応答を確認できませんでした。");
+  if (
+    value.expires_at !== undefined &&
+    (typeof value.expires_at !== "string" ||
+      !Number.isFinite(Date.parse(value.expires_at)))
+  )
+    throw new Error("添付の有効期限を確認できませんでした。");
+  return {
+    r2_key: value.r2_key,
+    url: path,
+    content_type: file.type,
+    name: file.name.slice(0, 255),
+    ...(value.expires_at === undefined
+      ? {}
+      : { expiresAt: value.expires_at as string }),
+  };
 }
 
 async function readMutationAcknowledgement(

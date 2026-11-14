@@ -1,5 +1,8 @@
 # Yurucommu Mobile
 
+If startup cannot read saved account data or the launch bridge, the screen reports a generic failure and offers **Retry** without displaying raw exception details.
+Each retry is explicit and deduplicated; it cannot register a replacement launch listener until prior cleanup is confirmed. A read failure is not accepted as an empty saved-account list.
+
 Feed cards and saved-post previews open the existing in-app post detail. Even remote post IDs are read through the connected account's server, without an external browser handoff. Failed reads can be retried; Back preserves the compose draft and restores focus to the originating card, including its replacement after a feed refresh.
 
 Post detail can save or remove a bookmark using the server's known state. Repeated clicks are blocked during a change, and a confirmed acknowledgment updates the action and re-reads the saved-post preview without clearing the compose draft. An unknown result never triggers an automatic resend: reload the post to reconcile its current state before another change. Account or navigation changes prevent an old acknowledgment from updating another view.
@@ -11,6 +14,21 @@ Home, saved posts, notifications and post detail use a 15-second read budget thr
 Post attachments are available in the feed, saved posts and notification post view. Images and videos load only after an explicit display action; failures can be retried and videos do not autoplay. Only the connected server's canonical media route receives the selected account's authorization. Public remote media remains anonymous. Private media uses temporary object URLs that are released when the account changes or its view is disposed. Invalid URLs and unsupported formats show an unavailable state. These are source/portable behaviors; device codecs and real-server use require separate verification.
 
 The composer accepts up to eight images/videos with a caption, preserving the server's required-text contract. SDK-validated files upload serially with queued, uploading, ready and failed states. Original Unicode filenames remain in the UI/post metadata. Retry is explicit; uncertain upload/post responses never trigger automatic resends and retain the draft. Expired staged uploads must be uploaded again. An accepted post retires only its submitted files, preserving newer edits and files. Clear, account changes and disposal abort pending reads and ignore late responses. Removing a draft attachment does not delete server media; the existing server retention/cleanup lifecycle owns unused uploads. Native file selection, real-server authorization/upload and device behavior still require separate qualification.
+
+Ordinary home-feed drafts are saved through the existing secure storage after a 150 ms input pause and restored for the same saved account after restart.
+The namespace separates host, random saved row, verified home actor and API; credentials, file bytes and blob URLs are not copied to ordinary preferences.
+Drafts remain until explicit clear or account removal. The last input can be lost if termination precedes its completed write.
+Valid upload references restore without another upload; expired or unfinished files require reselection. The original attempted post is saved before POST, and a failed checkpoint blocks dispatch.
+An interrupted or unknown post retains its original body, visibility and media separately from newer input. Restoration never automatically resends it.
+Read the current actor/feed through the canonical API, then explicitly confirm review to allow the next post; this creates no delivery ACK.
+A confirmed post and a failed final draft checkpoint remain distinct. Clear removes the current unsent draft while preserving any unreviewed original intent.
+Unreadable data is preserved and blocks saving/posting until explicit recovery. Actual saved-row removal retires only that row, with durable cleanup retry when intent recording succeeded; absence from metadata alone is insufficient.
+Current-format, same-scope corrupt feed/reply contents offer read-only review, cancellation and explicit conditional discard. Changed input, attachments, audience or saved bytes invalidate the previous confirmation. Recovery checks the saved record and canonical feed/replies, keeping live input and uncertain original sends without POST, upload or delivery acknowledgement. Lost delete acknowledgements and failed reads require explicit retry. Unknown headers/scopes/formats and valid expired attachments cannot authorize discard. A newer valid saved draft and different live input are preserved rather than automatically merged or overwritten; retain the live input before reopening the App to use the saved draft.
+Replies also use the verified saved row, with separate scopes for each canonical parent and for the ordinary post view versus the profile conversation. They cannot overwrite the home draft or each other's draft.
+Recovery retains the original uncertain parent/audience/community independently of newer input. Only a successful canonical replies read plus explicit review can permit the next send; restore or read failure never resends.
+Changed parent settings block sending until explicit adoption of the current canonical context. Actual followers-audience choices restore, while direct recipients still require explicit mentions and the existing API validation.
+Storage limits fail closed without evicting older drafts. Real saved-row removal and cleanup retry cover both home and reply scopes.
+Profile editing also stores its baseline, draft fields and original unconfirmed patch separately in the same verified account's secure storage. Real Stronghold/OS termination, signing, device update/rollback and legitimate server/SSO qualification are not established by these source/local checks.
 
 日本語: [README.md](README.md)
 
@@ -224,8 +242,13 @@ canonical stored profile and final viewer within one 15-second budget. Later
 per-field edits survive an earlier ACK. Unknown outcomes retain the draft and
 require an explicit read without automatic resubmission. Reads merge current
 stored values without clearing newer edits; discarding input requires confirmation.
-Drafts remain in memory for the current account; changing accounts retires its
-operations.
+After a 150 ms input pause, the verified saved row stores the baseline, draft and original uncertain patch in secure storage. Cold restoration verifies the current actor and canonical profile first, preserving untouched remote fields and newer per-field input.
+The original patch is persisted before PUT; checkpoint failure refuses dispatch. A known ACK stays accepted if final draft persistence fails. An uncertain patch or conflicting remote field requires another successful canonical read and explicit review before saving; review creates no ACK or automatic retry.
+Partial invalid input remains editable while the existing API validator controls submission. Valid image receipts restore without a new upload; expired or unfinished images require reselection or cancellation, including expiry during the pre-PUT checkpoint.
+Unreadable private bytes are preserved. Explicit storage retry and real saved-row retirement reuse the home/reply account envelope and cleanup retry; missing metadata alone never authorizes deletion. Input before its completed write, failure to record retirement intent, cross-process transactions and real Stronghold/OS/device/SSO qualification remain limited.
+Identifiable current-format corrupt profile contents offer explicit review, cancellation and scoped discard, with saved bytes checked again before removal. Changed input, image selection or saved contents invalidate the old confirmation. Discard reloads the canonical profile while preserving current fields, image receipts and uncertain original changes; it never sends or acknowledges a change. Lost local delete acknowledgement requires an explicit read. Unreadable headers, other scopes, unknown formats and valid expired-image receipts cannot authorize discard.
+Drafts use the verified saved row's private scope; changing accounts retires its
+live operations while preserving the other saved row's private input.
 
 Profile images load on explicit action. Only canonical selected-host media gets
 the bearer, and authenticated image responses must have a supported actual MIME
@@ -257,6 +280,24 @@ reads to restore it. Changing only the selected API endpoint also retires the
 previous operation scope. Preflight detects fields already changed by another
 writer, but the existing API has no atomic edit CAS, so a subsequent writer may
 still race it. App source/local evidence does not qualify devices or deployment.
+Post edits now persist under the verified saved account row, actor, Host/API,
+post and ordinary/profile view, separating the baseline, newer draft and original
+unconfirmed patch. Restored bytes grant no read or write authority. Unknown
+outcomes and conflicting fields require a fresh canonical read and explicit
+review; that action does not resend anything. A failed pre-send recovery write
+refuses PATCH. A failed final checkpoint does not turn a known canonical ACK
+into an unknown outcome. Corrupt records are preserved, with an explicit retry.
+When the current format and account/post/view scope are identifiable but saved
+contents are corrupt, an explicit review and confirmation can discard only that
+record. Cancellation preserves it; changed input or saved bytes invalidate the
+old confirmation. Unreadable headers, other scopes and unknown formats cannot
+authorize discard. A fresh canonical read follows, preserving current input and
+unconfirmed attempts without resending or acknowledging them. A lost local
+delete acknowledgement requires an explicit read before editing can resume.
+Existing row retirement and cleanup retry also cover post edits. Last input
+before a completed checkpoint, concurrent processes, real Stronghold/OS restart,
+device updates and legitimate server/SSO use remain separate qualification.
+
 
 Posts with content warnings start collapsed in home, bookmarks, details, replies
 and profiles. Each card offers explicit show/hide controls for its text and media;
